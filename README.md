@@ -1,0 +1,5 @@
+- Data source: NASA EONET API v3 (`https://eonet.gsfc.nasa.gov/api/v3/events`)
+- Local cached dataset: `data/eonet_events.csv`
+- Report: `midterm.html`
+- QMD code: `midterm.qmd`
+- Render command: `quarto render midterm.qmd`
