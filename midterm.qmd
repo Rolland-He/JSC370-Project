@@ -7,6 +7,11 @@ execute:
   message: false
   warning: false
 ---
+# Reproducibility
+- Data source: NASA EONET API v3 (`https://eonet.gsfc.nasa.gov/api/v3/events`)
+- Local cached dataset: `data/eonet_events.csv`
+- Render command: `quarto render midterm.qmd`
+- Repository link: `https://github.com/Rolland-He/JSC370-Project`
 
 # Introduction
 
@@ -486,8 +491,3 @@ For the final project, I will extend this work with:
 3. Validation: Use train/validation/test splits with robust metrics and error analysis by category and region.
 4. Interactive website outputs: Publish interactive dashboards (maps, filters, and trend comparisons) on GitHub Pages.
 
-## Reproducibility for Final Project
-- Data source: NASA EONET API v3 (`https://eonet.gsfc.nasa.gov/api/v3/events`)
-- Local cached dataset: `data/eonet_events.csv`
-- Render command: `quarto render midterm.qmd`
-- Repository link: https://github.com/Rolland-He/JSC370-Project
