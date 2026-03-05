@@ -1,0 +1,493 @@
+
+---
+author: Xucheng (Rolland) He 1008905909
+title: JSC370 Midterm Project - Global Natural Disaster Patterns using NASA EONET API
+format: html
+execute:
+  message: false
+  warning: false
+---
+
+# Introduction
+
+## Motivation
+
+Natural disasters, including wildfires, severe storms, volcanic eruptions, and sea ice events, pose serious and growing threats to human life and ecosystems worldwide. According to the United Nations Office for Disaster Risk Reduction, economic losses from natural disasters have increased dramatically over the past two decades, exceeding USD 2.9 trillion globally between 2000 and 2019.
+
+Understanding when, where, and how often these events occur is essential for several practical reasons. Disaster preparedness agencies rely on historical patterns to allocate resources and plan emergency responses. Despite these needs, consistent and globally comprehensive disaster records remain difficult to access through a single source.
+
+## Data Source
+
+This project uses the NASA Earth Observatory Natural Event Tracker (EONET), a curated public API maintained by NASA's Earth Science Data and Information System (ESDIS). EONET aggregates natural event records from multiple authoritative source systems, including the USGS Earthquake Hazards Program, NOAA, the IRWIN wildfire incident tracking system, and others，and exposes them through a unified REST API endpoint.
+
+The API is accessed at `https://eonet.gsfc.nasa.gov/api/v3/events` using paginated GET requests. Each event record contains:
+
+- title: a descriptive name of the event
+- categories: the hazard type
+- geometry: a list of time-stamped geographic observations associated with the event, each with a `date` and `coordinates` (longitude, latitude) field
+
+Because each event can have multiple geometry entries, the raw data is first flattened so that every row corresponds to a single geographic observation. The dataset covers events from approximately 2000 to the present day and requires no API key, making it fully reproducible.
+
+## Research Questions
+
+### How do natural disasters vary across time, category, and geographic location?
+
+And addresses three specific questions:
+
+1. Category dominance: Which disaster category is most frequently observed, and by how much does it exceed other categories?
+2. Temporal trend: Has the annual count of recorded disaster observations changed significantly over time, and which categories drive any observed trend?
+3. Seasonality: Do disaster observations exhibit monthly seasonality, and does the seasonal pattern differ across hazard categories?
+
+# Libraries Import
+
+```{python}
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+import os
+import calendar
+from scipy.stats import chi2_contingency, linregress
+```
+
+# Data Collection
+
+To ensure reproducibility and fast rendering, the dataset is fetched from the NASA EONET API only once and saved locally as a CSV file.
+
+```{python}
+os.makedirs("data", exist_ok=True)
+```
+
+## Fetch Data
+
+```{python}
+def fetch_eonet():
+
+    events = []
+    page = 1
+
+    while True:
+
+        url = f"https://eonet.gsfc.nasa.gov/api/v3/events?page={page}"
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            break
+
+        data = response.json()
+
+        if "events" not in data or len(data["events"]) == 0:
+            break
+
+        for event in data["events"]:
+
+            title = event["title"]
+            category = event["categories"][0]["title"]
+
+            for geometry in event["geometry"]:
+
+                date = geometry["date"]
+                coords = geometry["coordinates"]
+
+                lon = None
+                lat = None
+
+                if isinstance(coords, list) and len(coords) >= 2:
+                    lon = coords[0]
+                    lat = coords[1]
+
+                events.append({
+                    "title": title,
+                    "category": category,
+                    "date": date,
+                    "longitude": lon,
+                    "latitude": lat
+                })
+
+        page += 1
+
+    df = pd.DataFrame(events)
+
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+
+    return df
+```
+
+## Load Dataset
+
+```{python}
+FLAT_PATH = "data/eonet_events.csv"
+
+if os.path.exists(FLAT_PATH):
+    df = pd.read_csv(FLAT_PATH)
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+else:
+    df = fetch_eonet()
+    df.to_csv(FLAT_PATH, index=False)
+
+df.head()
+```
+
+# Dataset Overview
+
+```{python}
+overview_table = pd.DataFrame({
+    "Metric": ["Rows", "Columns", "Start Date", "End Date"],
+    "Value": [
+        len(df),
+        len(df.columns),
+        df["date"].min().date(),
+        df["date"].max().date()
+    ]
+})
+
+overview_table
+```
+
+The dataset contains historical natural disaster records from NASA EONET, including category, timestamp, and geolocation.
+
+# Data Cleaning
+
+```{python}
+rows_before = len(df)
+df = df.dropna(subset=["latitude","longitude"])
+rows_after = len(df)
+rows_removed = rows_before - rows_after
+
+df["latitude"] = pd.to_numeric(df["latitude"])
+df["longitude"] = pd.to_numeric(df["longitude"])
+
+cleaning_table = pd.DataFrame({
+    "Step": ["Rows before cleaning", "Rows after dropping missing coordinates", "Rows removed"],
+    "Value": [rows_before, rows_after, rows_removed]
+})
+
+cleaning_table
+```
+
+After cleaning, all remaining records have valid numeric coordinates and are ready for temporal and spatial analysis.
+
+# Methods
+
+This analysis follows four method components:
+
+1. Data acquisition (API-based): Historical natural event records are collected from the NASA EONET v3 API (`/events`) using pagination until no further events are returned.
+2. Data wrangling and cleaning: Nested geometry records are flattened into row-level observations with `date`, `category`, `latitude`, and `longitude`; missing coordinates are removed.
+3. Exploratory analysis: We analyze distribution by category, year, and month, then examine spatial concentration using global scatter and density maps.
+4. Statistical analysis: We test whether disaster category and month are independent (chi-square test) and estimate annual trend strength with linear regression.
+
+# Preliminary Results
+
+## Disaster Categories
+
+```{python}
+#| fig-cap: "Figure 1. Distribution of natural disaster observations by category in the NASA EONET dataset. Bar heights represent the total number of georeferenced records per hazard type."
+
+category_counts = df["category"].value_counts()
+total_events = len(df)
+top_category = category_counts.idxmax()
+top_category_count = int(category_counts.max())
+top_category_share = top_category_count / total_events
+
+plt.figure()
+category_counts.plot(kind="bar")
+plt.title("Natural Disasters by Category")
+plt.xlabel("Category")
+plt.ylabel("Number of Events")
+plt.tight_layout()
+plt.show()
+```
+
+Figure 1 presents the distribution of `{python} f"{total_events:,}"` observation records across all disaster categories. `{python} top_category` accounts for `{python} f"{top_category_count:,}"` records (`{python} f"{top_category_share:.1%}"` of the total), a share several times larger than any other category. This extreme concentration directly addresses Research Question 1: the dataset is structurally dominated by wildfire observations, which must be taken into account when interpreting any aggregate statistics or comparisons across categories.
+
+```{python}
+category_table = (
+    category_counts.rename_axis("Category")
+    .reset_index(name="Events")
+    .assign(Share=lambda x: x["Events"] / x["Events"].sum())
+)
+category_table["Share"] = category_table["Share"].map(lambda x: f"{x:.1%}")
+category_table
+```
+
+Table 1 summarizes the event count and percentage share for each disaster category. The figures confirm that the top category alone contributes the majority of all records, while the remaining categories together account for a substantially smaller proportion a pattern that motivates category-stratified analysis in subsequent sections.
+
+## Events Over Time
+
+```{python}
+#| fig-cap: "Figure 2. Annual count of disaster observations from the NASA EONET dataset. Each point represents the total number of georeferenced records in a given calendar year."
+
+year_counts = df.groupby("year").size()
+peak_year = int(year_counts.idxmax())
+peak_year_count = int(year_counts.max())
+latest_year = int(year_counts.index.max())
+latest_year_count = int(year_counts.loc[latest_year])
+previous_year = int(year_counts.index[-2])
+previous_year_count = int(year_counts.loc[previous_year])
+latest_year_change = (latest_year_count - previous_year_count) / previous_year_count
+
+plt.figure()
+year_counts.plot(marker="o")
+plt.title("Disasters Over Time")
+plt.xlabel("Year")
+plt.ylabel("Event Count")
+plt.tight_layout()
+plt.show()
+```
+
+Figure 2 traces the annual count of disaster observations from the earliest recorded year to the present. A pronounced upward inflection is evident starting around 2022, with the count reaching a peak of `{python} f"{peak_year_count:,}"` in `{python} peak_year`. The most recent full year, `{python} previous_year`, recorded `{python} f"{previous_year_count:,}"` observations, compared with fewer than 1,000 in most years prior to 2020. This pattern is relevant to Research Question 2, though it is important to note that part of the increase may reflect improved satellite coverage and reporting infrastructure rather than a true rise in event frequency.
+
+```{python}
+year_table = (
+    year_counts.rename_axis("Year")
+    .reset_index(name="Events")
+    .sort_values("Year")
+)
+year_table["YoY Change"] = year_table["Events"].pct_change()
+year_table["YoY Change"] = year_table["YoY Change"].map(
+    lambda x: "NA" if pd.isna(x) else f"{x:+.1%}"
+)
+year_table.tail(10)
+```
+
+Table 2 summarizes annual event counts and year-over-year percentage changes for the most recent ten years. The figures illustrate that the largest single-year increases occurred in the early 2020s, after which growth moderated but remained at historically high levels，consistent with the inflection visible in Figure 2.
+
+## Disaster Category Trends
+
+```{python}
+trend = df.groupby(["year","category"]).size().reset_index(name="count")
+latest_category_counts = (
+    trend[trend["year"] == latest_year]
+    .sort_values("count", ascending=False)
+    .reset_index(drop=True)
+)
+latest_top_category = latest_category_counts.loc[0, "category"]
+latest_top_category_count = int(latest_category_counts.loc[0, "count"])
+
+fig = px.line(
+    trend,
+    x="year",
+    y="count",
+    color="category",
+    title="Disaster Category Trends Over Time"
+)
+
+fig.show()
+```
+
+Figure 3 disaggregates the annual trend by disaster category using interactive lines. The plot demonstrates that `{python} latest_top_category` is responsible for virtually all of the recent surge, contributing `{python} f"{latest_top_category_count:,}"` observations in `{python} latest_year` alone, while all other categories display comparatively flat trajectories over the same period. This finding refines the answer to Research Question 2: the aggregate upward trend is not a broad-based phenomenon but is instead driven almost entirely by the growth in wildfire records, consistent with the category imbalance identified in Figure 1.
+
+## Seasonal Distribution
+
+```{python}
+#| fig-cap: "Figure 4. Monthly distribution of disaster observations across all years. Bar heights indicate the total number of records per calendar month, aggregated over the full study period."
+
+month_counts = df.groupby("month").size()
+peak_month = int(month_counts.idxmax())
+peak_month_name = calendar.month_name[peak_month]
+peak_month_count = int(month_counts.max())
+low_month = int(month_counts.idxmin())
+low_month_name = calendar.month_name[low_month]
+low_month_count = int(month_counts.min())
+
+plt.figure()
+month_counts.plot(kind="bar")
+plt.title("Seasonal Distribution of Disasters")
+plt.xlabel("Month")
+plt.ylabel("Event Count")
+plt.tight_layout()
+plt.show()
+```
+
+Figure 4 displays the total number of disaster observations aggregated by calendar month. The distribution is markedly non-uniform: `{python} peak_month_name` records the highest count at `{python} f"{peak_month_count:,}"` observations, approximately `{python} f"{peak_month_count / low_month_count:.1f}"` times the count in `{python} low_month_name` (`{python} f"{low_month_count:,}"`). This pronounced mid-to-late year concentration is directly relevant to Research Question 3 and suggests a strong seasonal structure in the data, likely driven by the fire seasons of the Northern Hemisphere.
+
+## Global Disaster Map
+
+```{python}
+lat_min, lat_max = float(df["latitude"].min()), float(df["latitude"].max())
+lon_min, lon_max = float(df["longitude"].min()), float(df["longitude"].max())
+top_points = (
+    df.groupby(["latitude", "longitude"]).size()
+    .sort_values(ascending=False)
+    .head(3)
+    .reset_index(name="count")
+)
+top_points_total = int(top_points["count"].sum())
+top_points_share = top_points_total / total_events
+
+fig = px.scatter_geo(
+    df,
+    lat="latitude",
+    lon="longitude",
+    color="category",
+    opacity=0.6,
+    title="Global Distribution of Natural Disasters"
+)
+
+fig.show()
+```
+
+Figure 5 maps all georeferenced disaster observations colored by category. The spatial coverage spans `{python} f"{lat_min:.1f}"` to `{python} f"{lat_max:.1f}"` latitude and `{python} f"{lon_min:.1f}"` to `{python} f"{lon_max:.1f}"` longitude, indicating near-global reach. Despite this breadth, the map reveals concentrated point clusters rather than a uniform global distribution — the three most frequently recurring coordinates alone account for `{python} f"{top_points_total:,}"` records (`{python} f"{top_points_share:.1%}"` of all observations), suggesting that certain persistently monitored locations contribute disproportionately to the dataset.
+
+## Disaster Density Map
+
+```{python}
+density_grid = (
+    df.assign(
+        lat_bin=(df["latitude"] // 5 * 5).astype(int),
+        lon_bin=(df["longitude"] // 5 * 5).astype(int)
+    )
+    .groupby(["lat_bin", "lon_bin"])
+    .size()
+    .reset_index(name="count")
+    .sort_values("count", ascending=False)
+    .reset_index(drop=True)
+)
+top_grid_count = int(density_grid.loc[0, "count"])
+top_grid_lat = int(density_grid.loc[0, "lat_bin"])
+top_grid_lon = int(density_grid.loc[0, "lon_bin"])
+top_grid_share = top_grid_count / total_events
+
+fig = px.density_mapbox(
+    df,
+    lat="latitude",
+    lon="longitude",
+    radius=6,
+    zoom=1,
+    mapbox_style="carto-positron",
+    title="Global Disaster Density Map"
+)
+
+fig.show()
+```
+
+Figure 6 renders observation density using a continuous heat map, which removes individual-point clutter and more clearly reveals regional concentration patterns. The highest-density region is centered near `{python} top_grid_lat`° latitude and `{python} top_grid_lon`° longitude, where a single 5-degree grid cell contains `{python} f"{top_grid_count:,}"` observations — equivalent to `{python} f"{top_grid_share:.1%}"` of the entire dataset. This spatial non-uniformity indicates that global disaster risk, as captured by EONET, is strongly concentrated in specific geographic zones rather than distributed evenly across the planet.
+
+## Category vs Season Heatmap
+
+```{python}
+#| fig-cap: "Figure 7. Heatmap of disaster observation counts by category and calendar month. Cell color encodes event frequency on a yellow-to-red scale; darker cells indicate higher counts."
+
+pivot = df.pivot_table(index="category", columns="month", aggfunc="size", fill_value=0)
+peak_category_month = pivot.stack().idxmax()
+peak_category_month_count = int(pivot.max().max())
+peak_cm_category = peak_category_month[0]
+peak_cm_month = int(peak_category_month[1])
+peak_cm_month_name = calendar.month_name[peak_cm_month]
+
+plt.figure(figsize=(10,6))
+sns.heatmap(pivot, cmap="YlOrRd")
+plt.title("Disaster Category vs Month Heatmap")
+plt.xlabel("Month")
+plt.ylabel("Category")
+plt.tight_layout()
+plt.show()
+```
+
+Figure 7 presents a category-by-month heatmap in which cell color encodes event count on a yellow-to-red scale. The visualization demonstrates that seasonality is not uniformly distributed across hazard types: `{python} peak_cm_category` exhibits the most pronounced seasonal signal, with its peak cell in `{python} peak_cm_month_name` reaching `{python} f"{peak_category_month_count:,}"` observations, while other categories remain consistently low across all months. This pattern directly addresses Research Question 3, providing evidence that seasonal concentration is primarily a wildfire-driven phenomenon rather than a dataset-wide characteristic.
+
+```{python}
+month_table = (
+    month_counts.rename_axis("Month")
+    .reset_index(name="Events")
+    .assign(
+        Month_Name=lambda x: x["Month"].map(lambda m: calendar.month_name[m]),
+        Share=lambda x: x["Events"] / x["Events"].sum()
+    )
+)
+month_table["Share"] = month_table["Share"].map(lambda x: f"{x:.1%}")
+month_table
+```
+
+Table 3 summarizes the total observation count and percentage share for each calendar month. The figures reinforce the seasonal pattern visible in Figure 4, with the top three months collectively accounting for a disproportionate share of annual observations.
+
+## Interactive Dashboard
+
+``` {python}
+second_category = category_counts.index[1]
+second_category_count = int(category_counts.iloc[1])
+
+fig = px.scatter_geo(
+    df,
+    lat="latitude",
+    lon="longitude",
+    facet_col="category",
+    facet_col_wrap=2,
+    title="Disaster Locations by Category"
+)
+fig.show()
+```
+
+Figure 8 presents a faceted geographic view separating each disaster category into its own panel. The comparison demonstrates that the `{python} top_category` panel (`{python} f"{top_category_count:,}"` records) is substantially denser and more geographically dispersed than the `{python} second_category` panel (`{python} f"{second_category_count:,}"` records) or any other category. This side-by-side layout reinforces the finding from Figure 1 and Table 1 that the overall spatial footprint of the dataset is dominated by a single hazard type, with all other categories occupying comparatively narrow geographic ranges.
+
+# Statistical Analysis
+
+```{python}
+contingency = pd.crosstab(df["category"], df["month"])
+chi2, p_value, dof, expected = chi2_contingency(contingency)
+
+trend_for_reg = year_counts.reset_index()
+trend_for_reg.columns = ["year", "count"]
+slope, intercept, r_value, reg_p_value, std_err = linregress(
+    trend_for_reg["year"], trend_for_reg["count"]
+)
+
+chi_msg = (
+    "Category and month are associated (seasonality differs by category)."
+    if p_value < 0.05
+    else "No statistically significant category-month association at 5% level."
+)
+
+trend_msg = (
+    "Yearly disaster counts show a statistically significant upward trend (p < 0.05)."
+    if reg_p_value < 0.05 and slope > 0
+    else f"The regression slope is positive but the trend is not statistically significant at the 5% level (p = {reg_p_value:.3f}), providing only marginal evidence of a long-term increase."
+)
+
+stats_table = pd.DataFrame({
+    "Test": [
+        "Chi-square test: category vs month",
+        "Linear trend test: yearly count vs year"
+    ],
+    "Statistic": [f"{chi2:.2f}", f"slope={slope:.2f}, R^2={r_value**2:.3f}"],
+    "p-value": [f"{p_value:.3e}", f"{reg_p_value:.3e}"],
+    "Interpretation": [
+        chi_msg,
+        trend_msg
+    ]
+})
+
+stats_table
+```
+
+Table 4 reports the results of two formal statistical tests. The chi-square test of independence between disaster category and month of occurrence yields a highly significant result (p &lt; 0.05), indicating that monthly patterns differ substantially across hazard types — consistent with the category-specific seasonality observed in Figure 7. The linear regression of annual event counts on year produces a positive slope; however, the p-value does not reach the 0.05 threshold, indicating that the long-term upward trend identified visually in Figures 2 and 3 should be interpreted with caution and cannot be confirmed as statistically significant at the conventional level.
+
+# Summary
+
+Key findings:
+
+- `{python} top_category` is the largest category with `{python} f"{top_category_count:,}"` events (`{python} f"{top_category_share:.1%}"` of all records), so category imbalance is a central pattern.
+- Annual counts peak in `{python} peak_year` at `{python} f"{peak_year_count:,}"`, and `{python} latest_year` remains elevated at `{python} f"{latest_year_count:,}"`, indicating a strong recent-period surge.
+- Seasonal concentration is substantial: `{python} peak_month_name` (`{python} f"{peak_month_count:,}"`) is much higher than `{python} low_month_name` (`{python} f"{low_month_count:,}"`), and the strongest cell is `{python} peak_cm_category` in `{python} peak_cm_month_name`.
+- Events are globally distributed but spatially clustered; the densest 5-degree grid cell contributes `{python} f"{top_grid_share:.1%}"` of all observations.
+- The chi-square test confirms a statistically significant category-month association (`{python} f"p={p_value:.3e}"`). The linear regression on annual counts yields a positive slope but a p-value of `{python} f"{reg_p_value:.3f}"`, which does not reach the 0.05 threshold — providing marginal rather than conclusive evidence of a long-term upward trend.
+
+## Plan for Final Project
+
+For the final project, I will extend this work with:
+
+1. Feature engineering: Build event-level temporal, spatial, and category features (including lag/season indicators and regional bins).
+2. Modeling: Train and compare predictive models for event intensity/frequency (e.g., baseline regression, tree-based models, and time-aware models).
+3. Validation: Use train/validation/test splits with robust metrics and error analysis by category and region.
+4. Interactive website outputs: Publish interactive dashboards (maps, filters, and trend comparisons) on GitHub Pages.
+
+## Reproducibility for Final Project
+- Data source: NASA EONET API v3 (`https://eonet.gsfc.nasa.gov/api/v3/events`)
+- Local cached dataset: `data/eonet_events.csv`
+- Render command: `quarto render midterm.qmd`
+- Repository link: https://github.com/Rolland-He/JSC370-Project
