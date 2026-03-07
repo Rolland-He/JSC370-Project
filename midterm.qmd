@@ -23,7 +23,7 @@ Understanding when, where, and how often these events occur is essential for sev
 
 ## Data Source
 
-This project uses the NASA Earth Observatory Natural Event Tracker (EONET), a curated public API maintained by NASA's Earth Science Data and Information System (ESDIS). EONET aggregates natural event records from multiple authoritative source systems, including the USGS Earthquake Hazards Program, NOAA, the IRWIN wildfire incident tracking system, and others，and exposes them through a unified REST API endpoint.
+This project uses the NASA Earth Observatory Natural Event Tracker (EONET), a curated public API maintained by NASA's Earth Science Data and Information System (ESDIS). EONET aggregates natural event records from multiple authoritative source systems, including the USGS Earthquake Hazards Program, NOAA, the IRWIN wildfire incident tracking system, and others, and exposes them through a unified REST API endpoint.
 
 The API is accessed at `https://eonet.gsfc.nasa.gov/api/v3/events` using paginated GET requests. Each event record contains:
 
@@ -31,7 +31,7 @@ The API is accessed at `https://eonet.gsfc.nasa.gov/api/v3/events` using paginat
 - categories: the hazard type
 - geometry: a list of time-stamped geographic observations associated with the event, each with a `date` and `coordinates` (longitude, latitude) field
 
-Because each event can have multiple geometry entries, the raw data is first flattened so that every row corresponds to a single geographic observation. The dataset covers events from approximately 2000 to the present day and requires no API key, making it fully reproducible.
+Because each event can have multiple geometry entries, the raw data is first flattened so that every row corresponds to a single geographic observation. The dataset covers events from approximately 2000s to the present day and requires no API key, making it fully reproducible.
 
 ## Research Questions
 
@@ -134,8 +134,6 @@ if os.path.exists(FLAT_PATH):
 else:
     df = fetch_eonet()
     df.to_csv(FLAT_PATH, index=False)
-
-df.head()
 ```
 
 # Dataset Overview
@@ -154,7 +152,7 @@ overview_table = pd.DataFrame({
 overview_table
 ```
 
-The dataset contains historical natural disaster records from NASA EONET, including category, timestamp, and geolocation.
+The dataset contains historical natural disaster records from NASA EONET, including category, timestamp, and geolocation. Including 27180 records and 7 columns from 2002 to 2026.
 
 # Data Cleaning
 
@@ -175,13 +173,18 @@ cleaning_table = pd.DataFrame({
 cleaning_table
 ```
 
-After cleaning, all remaining records have valid numeric coordinates and are ready for temporal and spatial analysis.
+Our cleaning steps shows that there's no missing coordinates or missing values in the 'latitude' and 'longitude' columns. Table below shows table format (first five rows) of the cleaned dataset.
+
+```{python}
+#| tbl-cap: "Table 0. First five rows of the cleaned dataset, illustrating the structure of each observation record."
+df.head()
+```
 
 # Methods
 
 This analysis follows four method components:
 
-1. Data acquisition (API-based): Historical natural event records are collected from the NASA EONET v3 API (`/events`) using pagination until no further events are returned.
+1. Data acquisition (API-based, shown above): Historical natural event records are collected from the NASA EONET v3 API (`/events`) using pagination until no further events are returned.
 2. Data wrangling and cleaning: Nested geometry records are flattened into row-level observations with `date`, `category`, `latitude`, and `longitude`; missing coordinates are removed.
 3. Exploratory analysis: We analyze distribution by category, year, and month, then examine spatial concentration using global scatter and density maps.
 4. Statistical analysis: We test whether disaster category and month are independent (chi-square test) and estimate annual trend strength with linear regression.
@@ -490,4 +493,5 @@ For the final project, I will extend this work with:
 2. Modeling: Train and compare predictive models for event intensity/frequency (e.g., baseline regression, tree-based models, and time-aware models).
 3. Validation: Use train/validation/test splits with robust metrics and error analysis by category and region.
 4. Interactive website outputs: Publish interactive dashboards (maps, filters, and trend comparisons) on GitHub Pages.
+5. Updated data fetching: Improve the scaping logic to handle real-time updates.
 
