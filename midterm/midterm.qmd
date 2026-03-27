@@ -9,8 +9,8 @@ execute:
 ---
 # Reproducibility
 - Data source: NASA EONET API v3 (`https://eonet.gsfc.nasa.gov/api/v3/events`)
-- Local cached dataset: `data/eonet_events.csv`
-- Render command: `quarto render midterm.qmd`
+- Local cached dataset: `../data/eonet_events.csv`
+- Render command: `quarto render midterm/midterm.qmd`
 - Repository link: `https://github.com/Rolland-He/JSC370-Project`
 
 # Introduction
@@ -124,7 +124,7 @@ def fetch_eonet():
 ## Load Dataset
 
 ```{python}
-FLAT_PATH = "data/eonet_events.csv"
+FLAT_PATH = "../data/eonet_events.csv"
 
 if os.path.exists(FLAT_PATH):
     df = pd.read_csv(FLAT_PATH)

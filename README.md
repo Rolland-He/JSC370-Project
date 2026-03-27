@@ -18,9 +18,10 @@ This repository contains course work for JSC370, including midterm/final report 
 - `docs/`: rendered website output for GitHub Pages
 - Local cached dataset: `data/eonet_events.csv`
 
-- Midterm Report: `midterm.html`
-- Midterm QMD code: `midterm.qmd`
-- Midterm Render command: `quarto render midterm.qmd`
+- Midterm Report: `midterm/midterm.html`
+- Midterm QMD code: `midterm/midterm.qmd`
+- Midterm PDF: `midterm/midterm_2026.pdf`
+- Midterm Render command: `quarto render midterm/midterm.qmd`
 
 ## Build Website Locally
 
