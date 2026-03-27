@@ -1,0 +1,575 @@
+---
+title: "JSC370 Final Project: Global Natural Disaster Patterns from NASA EONET"
+author: "Xucheng (Rolland) He, 1008905909"
+format:
+  pdf:
+    documentclass: article
+    number-sections: true
+    toc: true
+    fontsize: 11pt
+    geometry: margin=1in
+    linestretch: 1
+header-includes:
+  - \usepackage[none]{hyphenat}
+  - \emergencystretch=3em
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import os
+import calendar
+import numpy as np
+import pandas as pd
+import requests
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import chi2_contingency, linregress
+from pygam import LinearGAM, s, l, f
+from xgboost import XGBRegressor
+```
+
+## Introduction
+
+Natural disasters such as wildfires, severe storms, floods, and volcanic eruptions are major sources of social and ecological risk. Understanding their temporal and spatial patterns can support hazard monitoring and policy planning. However, globally consistent event records are often fragmented across agencies.
+
+This project uses NASA's Earth Observatory Natural Event Tracker (EONET) API to study global disaster observations in a unified framework. Compared with the midterm report, this final report keeps the same dataset and core topic but adds stronger statistical and modeling components, with clearer interpretation and limitations.
+
+The final research questions are:
+
+Main Research Question: How do global natural disaster observations recorded by NASA EONET vary across category, time, seasonality, and space, and to what extent do these patterns provide useful signal for simple out-of-sample prediction?
+
+Supporting Questions:
+
+1. Which disaster categories dominate the observed global records, and how imbalanced is the dataset?
+2. How have disaster observations changed over time, both overall and by category?
+3. Is seasonality statistically different across categories?
+4. Can a simple predictive model improve out-of-sample monthly count prediction relative to a seasonal baseline?
+
+## Methods
+
+### Data acquisition and wrangling
+
+The data source is the NASA EONET v3 endpoint: `https://eonet.gsfc.nasa.gov/api/v3/events`. The API is paginated and does not require an API key. To ensure reproducibility and avoid repeated network calls during rendering, the flattened dataset is cached as `data/eonet_events.csv`.
+
+```{python}
+os.makedirs("data", exist_ok=True)
+flat_path = "data/eonet_events.csv"
+
+def fetch_eonet_flat():
+    events = []
+    page = 1
+
+    while True:
+        url = f"https://eonet.gsfc.nasa.gov/api/v3/events?page={page}"
+        response = requests.get(url, timeout=30)
+
+        if response.status_code != 200:
+            break
+
+        payload = response.json()
+        if "events" not in payload or len(payload["events"]) == 0:
+            break
+
+        for event in payload["events"]:
+            category = event["categories"][0]["title"]
+            title = event["title"]
+            for geometry in event["geometry"]:
+                coords = geometry["coordinates"]
+                if isinstance(coords, list) and len(coords) >= 2:
+                    events.append(
+                        {
+                            "title": title,
+                            "category": category,
+                            "date": geometry["date"],
+                            "longitude": coords[0],
+                            "latitude": coords[1],
+                        }
+                    )
+        page += 1
+
+    out = pd.DataFrame(events)
+    out["date"] = pd.to_datetime(out["date"])
+    out["year"] = out["date"].dt.year
+    out["month"] = out["date"].dt.month
+    return out
+
+if os.path.exists(flat_path):
+    df = pd.read_csv(flat_path)
+    df["date"] = pd.to_datetime(df["date"])
+else:
+    df = fetch_eonet_flat()
+    df.to_csv(flat_path, index=False)
+
+df = df.dropna(subset=["latitude", "longitude"]).copy()
+df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+df = df.dropna(subset=["latitude", "longitude"]).copy()
+df["year"] = df["date"].dt.year
+df["month"] = df["date"].dt.month
+```
+
+### Analytical workflow
+
+The analysis has four layers:
+
+1. **Descriptive analysis**: category shares, annual trends, monthly seasonality, and spatial concentration.
+2. **Formal statistical testing**:
+   - chi-square test of independence for `category × month`;
+   - linear trend regression of annual counts on year.
+3. **Predictive modeling** (new in final report): monthly count prediction by category.
+4. **Evaluation**: out-of-sample metrics (MAE, RMSE, R2) on a strict time split.
+
+This combination is appropriate for the project goals. Descriptive summaries answer the distribution questions directly and transparently. The chi-square test is suitable because both `category` and `month` are categorical variables and the question concerns dependence in a contingency table. The annual linear trend model is a parsimonious first diagnostic of long-run direction, while the train/test predictive comparison addresses whether observed temporal patterns carry usable forecasting signal rather than only retrospective structure.
+
+For modeling, observations are aggregated to monthly category counts:
+
+$$
+Y_{t,c} = \#\{\text{observations in year-month } t \text{ and category } c\}.
+$$
+
+Two models are compared:
+
+- **Seasonal baseline**: predicts each category-month pair using its historical mean from training data.
+- **Linear model (OLS)**: uses `year`, cyclic month features (`sin`, `cos`), and category one-hot indicators.
+
+The OLS specification is:
+
+$$
+Y_{t,c} = \beta_0 + \beta_1 \,\text{year}_t + \beta_2 \sin\!\left(\frac{2\pi m_t}{12}\right)
++ \beta_3 \cos\!\left(\frac{2\pi m_t}{12}\right) + \sum_{k=2}^{K}\gamma_k \,\mathbf{1}(c=k) + \varepsilon_{t,c},
+$$
+
+where \(m_t\) is calendar month and category indicators use one reference category.
+
+Training/testing protocol:
+
+- Training: years `<= 2023`
+- Testing: years `>= 2024` (strictly future data)
+
+This split is appropriate because it enforces temporal ordering, so every test prediction uses only information that would have been available before 2024.
+
+The seasonal baseline is intentionally simple and strong: if no model can consistently outperform historical category-month averages, then added model complexity is not yet justified. OLS is used as an interpretable extension of that baseline, allowing us to test whether linear time drift and smooth seasonal structure improve generalization.
+
+As a nonlinear extension motivated by course material on smooth modeling, we additionally fit a GAM that replaces the linear year effect with a smooth term while preserving seasonal and category structure. We also add a lightweight XGBoost benchmark to test whether a flexible nonlinear learner materially improves out-of-sample prediction under the same temporal split.
+
+For extended predictive experiments, we construct additional category-level time-series features, including month index, lagged counts, and short rolling means.
+
+## Results
+
+```{python}
+category_counts = df["category"].value_counts().sort_values(ascending=False)
+total_events = len(df)
+top_category = category_counts.index[0]
+top_category_count = int(category_counts.iloc[0])
+top_category_share = top_category_count / total_events
+
+year_counts = df.groupby("year").size().sort_index()
+peak_year = int(year_counts.idxmax())
+peak_year_count = int(year_counts.max())
+
+month_counts = df.groupby("month").size().sort_index()
+peak_month = int(month_counts.idxmax())
+low_month = int(month_counts.idxmin())
+peak_month_name = calendar.month_name[peak_month]
+low_month_name = calendar.month_name[low_month]
+```
+
+### Category dominance and imbalance
+
+```{python}
+#| fig-cap: "Distribution of EONET disaster observations by category."
+plt.figure(figsize=(9, 4.8))
+category_counts.plot(kind="bar", color="#1f77b4")
+plt.xlabel("Category")
+plt.ylabel("Observation count")
+plt.title("Disaster observations by category")
+plt.tight_layout()
+plt.show()
+```
+
+The dataset contains `{python} f"{total_events:,}"` georeferenced observations. The largest class is `{python} top_category` with `{python} f"{top_category_count:,}"` observations, representing `{python} f"{top_category_share:.1%}"` of all records. This concentration indicates that any aggregate result can be strongly influenced by wildfire dynamics.
+
+```{python}
+#| tbl-cap: "Category-level observation counts and shares."
+category_table = (
+    category_counts.rename_axis("Category")
+    .reset_index(name="Observations")
+    .assign(Share=lambda d: d["Observations"] / d["Observations"].sum())
+)
+category_table["Share"] = category_table["Share"].map(lambda x: f"{x:.1%}")
+category_table
+```
+
+### Temporal trend and category-specific trajectories
+
+```{python}
+#| fig-cap: "Annual total number of EONET disaster observations."
+plt.figure(figsize=(8.2, 4.6))
+year_counts.plot(marker="o", color="#2c7fb8")
+plt.xlabel("Year")
+plt.ylabel("Observation count")
+plt.title("Annual trend in EONET observations")
+plt.tight_layout()
+plt.show()
+```
+
+Overall counts rise sharply in the early 2020s, with a peak of `{python} f"{peak_year_count:,}"` in `{python} peak_year`. The visual trend suggests a substantial recent increase, but interpretation should account for potential changes in monitoring intensity and reporting infrastructure.
+
+Substantively, this figure is best interpreted as a change in *recorded observations* rather than a direct estimate of physical hazard frequency. In an operational monitoring system such as EONET, improved sensing coverage, reporting pipelines, and event tracking practices can increase counts even when underlying hazard processes are unchanged. This is why the trend is paired with formal inference and category-stratified diagnostics later in the report.
+
+```{python}
+#| fig-cap: "Annual trajectories of the most frequent disaster categories."
+top_k = min(5, len(category_counts))
+top_categories = category_counts.head(top_k).index.tolist()
+trend_top = (
+    df[df["category"].isin(top_categories)]
+    .groupby(["year", "category"])
+    .size()
+    .reset_index(name="count")
+)
+
+plt.figure(figsize=(12.2, 5.9))
+for cat in top_categories:
+    sub = trend_top[trend_top["category"] == cat]
+    plt.plot(sub["year"], sub["count"], marker="o", linewidth=1.5, label=cat)
+
+year_ticks = sorted(trend_top["year"].unique().tolist())
+n_ticks = min(6, len(year_ticks))
+tick_idx = np.linspace(0, len(year_ticks) - 1, n_ticks, dtype=int)
+tick_values = [year_ticks[i] for i in sorted(set(tick_idx))]
+plt.xticks(tick_values, rotation=45, ha="right")
+plt.xlabel("Year")
+plt.ylabel("Observation count")
+if top_k == 4:
+    plt.title("Annual trends by category (top 4)")
+else:
+    plt.title(f"Annual trends by category (top {top_k})")
+plt.legend(
+    title="Category",
+    frameon=False,
+    fontsize=8,
+    title_fontsize=9,
+    loc="upper left",
+    bbox_to_anchor=(1.01, 1.0),
+)
+plt.tight_layout(rect=[0, 0.02, 0.82, 1])
+plt.show()
+```
+
+Category-stratified trajectories show that the recent surge is not equally shared across categories: wildfire-related observations account for most of the increase, while other hazard classes are flatter and lower-volume.
+
+This decomposition materially changes the interpretation of the aggregate trend. Instead of concluding that all disaster classes are rising in parallel, the evidence points to composition effects: one dominant category contributes most of the total increase. As a result, pooled trend summaries should be read alongside category-level patterns to avoid over-generalization.
+
+### Seasonality and spatial concentration
+
+```{python}
+#| fig-cap: "Monthly seasonality of total EONET observations aggregated across years."
+month_counts_full = month_counts.reindex(range(1, 13), fill_value=0)
+month_labels = [calendar.month_abbr[m] for m in range(1, 13)]
+
+plt.figure(figsize=(9.8, 4.8))
+plt.bar(range(1, 13), month_counts_full.values, color="#31a354")
+plt.xticks(range(1, 13), month_labels, rotation=0)
+plt.xlabel("Month")
+plt.ylabel("Observation count")
+plt.title("Monthly seasonality of disaster observations")
+plt.tight_layout(pad=1.1)
+plt.show()
+```
+
+Seasonality is strong: `{python} peak_month_name` has the highest count and `{python} low_month_name` has the lowest. The peak month has about `{python} f"{month_counts_full.max() / month_counts_full.min():.1f}"` times as many observations as the trough month, consistent with seasonal wildfire dynamics.
+
+```{python}
+#| fig-cap: "Heatmap of category-by-month observation counts in EONET."
+pivot = df.pivot_table(index="category", columns="month", aggfunc="size", fill_value=0)
+plt.figure(figsize=(10.2, 5.3))
+sns.heatmap(pivot, cmap="YlOrRd")
+plt.xlabel("Month")
+plt.ylabel("Category")
+plt.title("Category vs month heatmap")
+plt.tight_layout(pad=1.0)
+plt.show()
+```
+
+The heatmap confirms that seasonality differs by category, motivating formal hypothesis testing rather than visual inspection alone.
+
+```{python}
+#| fig-cap: "Global spatial distribution of georeferenced EONET observations."
+plt.figure(figsize=(11.5, 5.4))
+plt.scatter(
+    df["longitude"],
+    df["latitude"],
+    c=pd.factorize(df["category"])[0],
+    s=5,
+    alpha=0.35,
+    cmap="tab10",
+)
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+plt.title("Global spatial distribution of EONET disaster observations", pad=12)
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.show()
+```
+
+Spatially, events are globally distributed but highly clustered in specific regions, indicating uneven hazard activity and/or uneven observation density.
+
+Importantly, spatial concentration in this dataset should not be interpreted as a direct map of intrinsic hazard risk. EONET reflects where events are observed, reported, and tracked with higher continuity; therefore, the map primarily represents observed-event density generated by both hazard processes and monitoring/reporting-system coverage.
+
+### Statistical tests
+
+```{python}
+contingency = pd.crosstab(df["category"], df["month"])
+chi2, p_value, dof, _ = chi2_contingency(contingency)
+
+trend_df = year_counts.reset_index()
+trend_df.columns = ["year", "count"]
+slope, intercept, r_value, reg_p_value, std_err = linregress(
+    trend_df["year"], trend_df["count"]
+)
+
+def format_p_value(p):
+    if p < 0.001:
+        return "p < 0.001"
+    return f"p = {p:.3f}"
+
+chi_p_text = format_p_value(p_value)
+reg_p_text = format_p_value(reg_p_value)
+
+stats_table = pd.DataFrame(
+    {
+        "Test": [
+            "Chi-square: category vs month",
+            "Linear trend: annual count ~ year",
+        ],
+        "Statistic": [f"chi2={chi2:.2f}, dof={dof}", f"slope={slope:.2f}, R2={r_value**2:.3f}"],
+        "p-value": [chi_p_text, reg_p_text],
+    }
+)
+```
+
+```{python}
+#| tbl-cap: "Formal hypothesis-testing results for seasonality and long-run trend."
+stats_table
+```
+
+The chi-square test indicates strong evidence that category and month are associated (`{python} chi_p_text`), meaning seasonal patterns vary across disaster types. For the annual linear trend, the estimated slope is positive, but the result is not statistically significant at the conventional 5% level (`{python} reg_p_text`, `{python} f"R2={r_value**2:.3f}"`). Therefore, the evidence for a long-run increase is weak to marginal rather than conclusive.
+
+### Predictive modeling (train/test evaluation)
+
+```{python}
+# Monthly category panel
+panel = (
+    df.groupby(["year", "month", "category"])
+    .size()
+    .reset_index(name="count")
+    .sort_values(["year", "month", "category"])
+    .reset_index(drop=True)
+)
+panel["month_num"] = panel["month"]
+panel["sin_month"] = np.sin(2 * np.pi * panel["month_num"] / 12.0)
+panel["cos_month"] = np.cos(2 * np.pi * panel["month_num"] / 12.0)
+panel["category_code"] = panel["category"].astype("category").cat.codes
+
+# Category-level lag features for extended benchmarks
+panel = panel.sort_values(["category", "year", "month"]).reset_index(drop=True)
+panel["lag_1"] = panel.groupby("category")["count"].shift(1)
+panel["lag_12"] = panel.groupby("category")["count"].shift(12)
+panel["rolling_mean_3"] = panel.groupby("category")["count"].transform(
+    lambda s: s.shift(1).rolling(window=3, min_periods=1).mean()
+)
+
+train = panel[panel["year"] <= 2023].copy()
+test = panel[panel["year"] >= 2024].copy()
+
+# Baseline: historical mean for each (category, month) in train
+baseline_lookup = (
+    train.groupby(["category", "month"])["count"].mean().rename("pred_baseline").reset_index()
+)
+test = test.merge(baseline_lookup, on=["category", "month"], how="left")
+test["pred_baseline"] = test["pred_baseline"].fillna(train["count"].mean())
+
+# OLS features: year, month cyclic, category one-hot
+def make_design_matrix(frame, categories):
+    out = pd.DataFrame(
+        {
+            "intercept": 1.0,
+            "year": frame["year"].astype(float),
+            "month_sin": np.sin(2 * np.pi * frame["month"] / 12.0),
+            "month_cos": np.cos(2 * np.pi * frame["month"] / 12.0),
+        },
+        index=frame.index,
+    )
+    for c in categories[1:]:
+        out[f"cat_{c}"] = (frame["category"] == c).astype(float)
+    return out
+
+all_categories = sorted(panel["category"].unique().tolist())
+X_train = make_design_matrix(train, all_categories).to_numpy()
+y_train = train["count"].to_numpy(dtype=float)
+X_test = make_design_matrix(test, all_categories).to_numpy()
+y_test = test["count"].to_numpy(dtype=float)
+
+# Closed-form OLS with pseudo-inverse
+beta = np.linalg.pinv(X_train.T @ X_train) @ X_train.T @ y_train
+test["pred_ols"] = np.maximum(0, X_test @ beta)
+
+# GAM benchmark: replace linear year with smooth year term
+gam_train = train.copy()
+gam_test = test.copy()
+X_gam_train = gam_train[["year", "sin_month", "cos_month", "category_code"]].to_numpy()
+X_gam_test = gam_test[["year", "sin_month", "cos_month", "category_code"]].to_numpy()
+y_gam_train = gam_train["count"].to_numpy(dtype=float)
+
+gam_model = LinearGAM(s(0) + l(1) + l(2) + f(3)).fit(X_gam_train, y_gam_train)
+test["pred_gam"] = np.maximum(0, gam_model.predict(X_gam_test))
+
+# XGBoost benchmark: lightweight nonlinear model
+xgb_train = train.copy()
+xgb_test = test.copy()
+xgb_train["lag_1"] = xgb_train["lag_1"].fillna(0)
+xgb_train["lag_12"] = xgb_train["lag_12"].fillna(0)
+xgb_train["rolling_mean_3"] = xgb_train["rolling_mean_3"].fillna(0)
+xgb_test["lag_1"] = xgb_test["lag_1"].fillna(0)
+xgb_test["lag_12"] = xgb_test["lag_12"].fillna(0)
+xgb_test["rolling_mean_3"] = xgb_test["rolling_mean_3"].fillna(0)
+
+xgb_feature_cols = [
+    "year",
+    "month_num",
+    "sin_month",
+    "cos_month",
+    "lag_1",
+    "lag_12",
+    "rolling_mean_3",
+]
+xgb_train_X = pd.get_dummies(
+    xgb_train[xgb_feature_cols + ["category"]],
+    columns=["category"],
+    drop_first=True,
+)
+xgb_test_X = pd.get_dummies(
+    xgb_test[xgb_feature_cols + ["category"]],
+    columns=["category"],
+    drop_first=True,
+)
+xgb_test_X = xgb_test_X.reindex(columns=xgb_train_X.columns, fill_value=0)
+
+xgb_model = XGBRegressor(
+    n_estimators=200,
+    max_depth=4,
+    learning_rate=0.05,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=370,
+    objective="reg:squarederror",
+)
+xgb_model.fit(xgb_train_X, xgb_train["count"])
+test["pred_xgb"] = np.maximum(0, xgb_model.predict(xgb_test_X))
+
+def regression_metrics(y_true, y_pred):
+    mae = float(np.mean(np.abs(y_true - y_pred)))
+    rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+    ss_res = float(np.sum((y_true - y_pred) ** 2))
+    ss_tot = float(np.sum((y_true - np.mean(y_true)) ** 2))
+    r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else np.nan
+    return mae, rmse, r2
+
+b_mae, b_rmse, b_r2 = regression_metrics(y_test, test["pred_baseline"].to_numpy())
+o_mae, o_rmse, o_r2 = regression_metrics(y_test, test["pred_ols"].to_numpy())
+g_mae, g_rmse, g_r2 = regression_metrics(y_test, test["pred_gam"].to_numpy())
+x_mae, x_rmse, x_r2 = regression_metrics(y_test, test["pred_xgb"].to_numpy())
+
+model_eval = pd.DataFrame(
+    {
+        "Model": [
+            "Seasonal baseline",
+            "OLS (linear year + month cycle + category)",
+            "GAM (smooth year + month cycle + category)",
+            "XGBoost (extended feature benchmark)",
+        ],
+        "MAE": [b_mae, o_mae, g_mae, x_mae],
+        "RMSE": [b_rmse, o_rmse, g_rmse, x_rmse],
+        "R2": [b_r2, o_r2, g_r2, x_r2],
+    }
+)
+model_eval[["MAE", "RMSE", "R2"]] = model_eval[["MAE", "RMSE", "R2"]].round(3)
+
+cat_eval_rows = []
+for cat, g in test.groupby("category"):
+    y_c = g["count"].to_numpy()
+    pb = g["pred_baseline"].to_numpy()
+    po = g["pred_ols"].to_numpy()
+    pg = g["pred_gam"].to_numpy()
+    px = g["pred_xgb"].to_numpy()
+    _, rmse_b, _ = regression_metrics(y_c, pb)
+    _, rmse_o, _ = regression_metrics(y_c, po)
+    _, rmse_g, _ = regression_metrics(y_c, pg)
+    _, rmse_x, _ = regression_metrics(y_c, px)
+    cat_eval_rows.append(
+        {
+            "Category": cat,
+            "Baseline": rmse_b,
+            "OLS": rmse_o,
+            "GAM": rmse_g,
+            "XGBoost": rmse_x,
+        }
+    )
+cat_eval = pd.DataFrame(cat_eval_rows).sort_values("Baseline", ascending=False).reset_index(drop=True)
+cat_eval[["Baseline", "OLS", "GAM", "XGBoost"]] = cat_eval[
+    ["Baseline", "OLS", "GAM", "XGBoost"]
+].round(2)
+```
+
+```{python}
+#| tbl-cap: "Out-of-sample predictive performance on test years (>= 2024)."
+model_eval
+```
+
+```{python}
+#| fig-cap: "Smoothed annual trend from GAM overlaid on observed annual counts."
+annual_df = year_counts.reset_index()
+annual_df.columns = ["year", "count"]
+annual_gam = LinearGAM(s(0)).fit(annual_df[["year"]].to_numpy(), annual_df["count"].to_numpy())
+year_grid = np.linspace(annual_df["year"].min(), annual_df["year"].max(), 200)
+annual_pred = annual_gam.predict(year_grid.reshape(-1, 1))
+
+plt.figure(figsize=(8.6, 4.8))
+plt.plot(annual_df["year"], annual_df["count"], marker="o", linewidth=1.5, label="Observed annual counts")
+plt.plot(year_grid, annual_pred, color="#d95f02", linewidth=2.2, label="GAM smooth trend")
+plt.xlabel("Year")
+plt.ylabel("Observation count")
+plt.title("Observed annual counts with GAM smooth trend")
+plt.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+#| tbl-cap: "Category-level RMSE comparison across baseline, OLS, GAM, and XGBoost."
+cat_eval
+```
+
+For Research Question 4, the main conclusion remains unchanged: out-of-sample prediction is challenging under the current setup. The OLS model does not deliver a consistent overall improvement over the seasonal baseline, and both models keep negative test R2 values (`{python} f"{b_r2:.3f}"` baseline; `{python} f"{o_r2:.3f}"` OLS). The GAM benchmark tests whether replacing constant linear drift with a smooth long-run trend helps, while XGBoost tests whether additional nonlinear flexibility and lag features materially improve prediction.
+
+These extensions add robustness depth rather than replacing the main narrative. If GAM and XGBoost show limited or inconsistent gains, that is still informative: it indicates that forecast performance is constrained more by available signal and feature design than by model class alone. Category-level results continue to show that any improvement is uneven, with dominant wildfire dynamics remaining hardest to improve.
+
+## Conclusions and Summary
+
+This final report extends the midterm analysis into a more complete statistical workflow. Four conclusions stand out:
+
+1. The EONET dataset is strongly imbalanced, with `{python} top_category` contributing `{python} f"{top_category_share:.1%}"` of observations.
+2. Total recorded observations increase sharply in recent years, peaking at `{python} f"{peak_year_count:,}"` in `{python} peak_year`.
+3. Seasonality is substantial and category-specific, supported by both visual diagnostics and a significant chi-square test.
+4. The predictive-modeling test does not show a reliable overall improvement over a seasonal baseline; gains are limited to specific minor categories and are not robust at the dataset level.
+
+The broader implication is that global disaster monitoring data should be interpreted with attention to category imbalance and observation-system effects, not only hazard dynamics. Main limitations include potential reporting heterogeneity across years, the use of observation counts rather than physical severity, and simple linear model structure. Future work can incorporate richer covariates (climate indices, regional land cover, remote-sensing intensity metrics) and compare nonlinear or hierarchical models.
+
+At a bigger-picture level, this project shows that disaster-monitoring datasets are dual-purpose artifacts: they describe natural events, but they also encode how institutions observe the Earth. For policy and research use, this means trend, seasonality, and spatial concentration should be interpreted as signals from both hazards and measurement systems. A publication-ready analysis therefore needs both statistical rigor and measurement-awareness, especially when conclusions may inform real-world preparedness decisions.
+
+Interactive versions of the key maps and trend views are provided on the project GitHub website, while this PDF presents the corresponding publication-ready static figures and statistical interpretation.
+
+For reproducibility, this report runs entirely from repository-relative paths and a cached dataset in `data/eonet_events.csv`.
+
