@@ -7,6 +7,7 @@ output:
 ---
 
 ```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 source("process_eonet_data.R")
 ```
 
@@ -99,6 +100,8 @@ p_model_compare
 ```
 
 Use the metric toggle to switch among MAE, RMSE, and R2 for the four benchmark models.
+
+`r xgboost_status_note`
 
 ```{r category-model-compare, echo=FALSE}
 p_category_model_compare

@@ -93,8 +93,10 @@ annual_counts <- df %>%
 peak_row <- annual_counts %>% filter(n == max(n)) %>% slice(1)
 
 p_annual <- plot_ly(annual_counts, x = ~year) %>%
-  add_lines(
+  add_trace(
     y = ~n,
+    type = "scatter",
+    mode = "lines+markers",
     name = "Raw annual counts",
     line = list(color = "#2c7fb8", width = 2.5),
     marker = list(size = 6, color = "#2c7fb8"),
@@ -266,7 +268,14 @@ make_popup <- function(data_in) {
 }
 
 make_map <- function(data_in) {
-  leaflet(data_in) %>%
+  map_df <- data_in %>%
+    mutate(color_value = unname(palette_values[as.character(category)]))
+
+  legend_df <- map_df %>%
+    distinct(category, color_value) %>%
+    arrange(category)
+
+  leaflet(map_df) %>%
     addProviderTiles(providers$CartoDB.Positron) %>%
     addCircleMarkers(
       lng = ~longitude,
@@ -274,14 +283,14 @@ make_map <- function(data_in) {
       radius = 4,
       stroke = FALSE,
       fillOpacity = 0.7,
-      color = ~palette_values[category],
-      popup = make_popup(data_in),
+      color = ~color_value,
+      popup = make_popup(map_df),
       clusterOptions = markerClusterOptions()
     ) %>%
     addLegend(
       "bottomright",
-      colors = unname(palette_values),
-      labels = names(palette_values),
+      colors = legend_df$color_value,
+      labels = as.character(legend_df$category),
       title = "Category",
       opacity = 0.8
     )
@@ -370,15 +379,17 @@ if (has_xgboost) {
 metric_rows <- list(
   tibble(model = "Seasonal baseline", !!!as.list(metric_fn(test$count, test$pred_baseline))),
   tibble(model = "OLS", !!!as.list(metric_fn(test$count, test$pred_ols))),
-  tibble(model = "GAM", !!!as.list(metric_fn(test$count, test$pred_gam))),
-  tibble(model = "XGBoost", !!!as.list(metric_fn(test$count, test$pred_xgb)))
+  tibble(model = "GAM", !!!as.list(metric_fn(test$count, test$pred_gam)))
 )
+if (has_xgboost) {
+  metric_rows <- append(
+    metric_rows,
+    list(tibble(model = "XGBoost", !!!as.list(metric_fn(test$count, test$pred_xgb))))
+  )
+}
 
 model_eval <- bind_rows(metric_rows) %>%
   mutate(across(c(MAE, RMSE, R2), as.numeric))
-
-metric_long <- model_eval %>%
-  pivot_longer(cols = c(MAE, RMSE, R2), names_to = "metric", values_to = "value")
 
 p_model_compare <- plot_ly()
 metric_list <- c("MAE", "RMSE", "R2")
@@ -429,10 +440,19 @@ category_model_compare <- test %>%
     Baseline = sqrt(mean((count - pred_baseline)^2, na.rm = TRUE)),
     OLS = sqrt(mean((count - pred_ols)^2, na.rm = TRUE)),
     GAM = sqrt(mean((count - pred_gam)^2, na.rm = TRUE)),
-    XGBoost = sqrt(mean((count - pred_xgb)^2, na.rm = TRUE)),
     .groups = "drop"
-  ) %>%
-  pivot_longer(cols = c(Baseline, OLS, GAM, XGBoost), names_to = "model", values_to = "rmse")
+  )
+
+if (has_xgboost) {
+  xgb_by_category <- test %>%
+    group_by(category) %>%
+    summarise(XGBoost = sqrt(mean((count - pred_xgb)^2, na.rm = TRUE)), .groups = "drop")
+  category_model_compare <- category_model_compare %>%
+    left_join(xgb_by_category, by = "category")
+}
+
+category_model_compare <- category_model_compare %>%
+  pivot_longer(cols = -category, names_to = "model", values_to = "rmse")
 
 p_category_model_compare <- plot_ly(
   category_model_compare,
@@ -440,10 +460,16 @@ p_category_model_compare <- plot_ly(
   y = ~rmse,
   color = ~model,
   type = "bar",
-  barmode = "group",
   hovertemplate = "Category: %{x}<br>Model: %{fullData.name}<br>RMSE: %{y:.2f}<extra></extra>"
 ) %>%
   layout(
     xaxis = list(title = "Category"),
-    yaxis = list(title = "RMSE")
+    yaxis = list(title = "RMSE"),
+    barmode = "group"
   )
+
+xgboost_status_note <- if (has_xgboost) {
+  "All four models are available in the current environment."
+} else {
+  "XGBoost is unavailable in the current environment, so benchmarking charts show Baseline/OLS/GAM only."
+}
