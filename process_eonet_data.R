@@ -180,9 +180,9 @@ p_category_trend <- p_category_trend %>%
         x = 0,
         y = 1.15,
         buttons = list(
-          list(method = "restyle", args = list("visible", list(rep(TRUE, length(category_names)))), label = "All categories"),
-          list(method = "restyle", args = list("visible", list(wildfire_visible)), label = "Wildfires only"),
-          list(method = "restyle", args = list("visible", list(non_wildfire_visible)), label = "Non-wildfire categories")
+          list(method = "restyle", args = list("visible", rep(TRUE, length(category_names))), label = "All categories"),
+          list(method = "restyle", args = list("visible", wildfire_visible), label = "Wildfires only"),
+          list(method = "restyle", args = list("visible", non_wildfire_visible), label = "Non-wildfire categories")
         )
       )
     ),
