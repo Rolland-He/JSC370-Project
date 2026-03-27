@@ -41,11 +41,14 @@ p_category_trend
 ### Spatial Distribution
 
 ```{r spatial-distribution, echo=FALSE}
-p_map
+p_map_all
 ```
 
 ## Explore More
 
-- [Interactive Visualizations](Interactive_Vis.html)
+Explore category composition, seasonality panels, map filters, and predictive benchmarking on the full interactive page.
+
+<a class="action-button" href="Interactive_Vis.html">Explore Full Interactive Visualizations</a>
+
 - [Download Report (PDF)](final.pdf)
 - [GitHub Repository](https://github.com/Rolland-He/JSC370-Project)

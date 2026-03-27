@@ -16,39 +16,95 @@ source("process_eonet_data.R")
 p_category
 ```
 
-This chart shows the category distribution of EONET observations.
+This ranked bar chart highlights the extreme category imbalance in the EONET record. Wildfires are visually emphasized and annotated because they dominate the observed event volume.
 
-## Temporal Trend
+## Temporal Trends
 
 ```{r temporal-trend, echo=FALSE}
 p_annual
 ```
 
-This line chart shows annual total observations over time.
-
-## Category-Specific Trajectories
+The annual view combines raw counts with a smooth trend line to separate short-term fluctuations from broad movement in observation volume.
 
 ```{r category-trajectories, echo=FALSE}
 p_category_trend
 ```
 
-This interactive plot compares category-level annual trajectories.
+Use legend click and the chart controls to isolate Wildfires or non-wildfire categories and compare how the recent surge differs by hazard type.
 
-## Seasonality
+## Seasonality {.tabset}
 
-```{r seasonality, echo=FALSE}
-p_heatmap
+### Absolute Counts
+
+```{r seasonality-abs, echo=FALSE}
+p_heatmap_abs
 ```
 
-This heatmap shows month-by-category seasonal concentration.
+This panel shows where absolute volume is concentrated by month and category.
 
-## Spatial Distribution
+### Within-Category Normalized
 
-```{r spatial-map, echo=FALSE}
-p_map
+```{r seasonality-norm, echo=FALSE}
+p_heatmap_norm
 ```
 
-The interactive map allows zooming and closer regional inspection.
+This normalized view rescales each category to reveal seasonal shape even for smaller categories.
+
+### Monthly Curves by Category
+
+```{r monthly-pattern-by-category, echo=FALSE}
+p_monthly_pattern_by_category
+```
+
+Line-based monthly profiles complement the heatmap and make category-specific seasonality easier to trace.
+
+## Spatial Distribution {.tabset}
+
+### All Events
+
+```{r map-all, echo=FALSE}
+p_map_all
+```
+
+Clustered markers improve performance and make high-density regions easier to inspect.
+
+### Wildfires Only
+
+```{r map-wildfires, echo=FALSE}
+p_map_wildfires
+```
+
+### Sea and Lake Ice Only
+
+```{r map-ice, echo=FALSE}
+p_map_ice
+```
+
+### Volcanoes Only
+
+```{r map-volcanoes, echo=FALSE}
+p_map_volcanoes
+```
+
+### Severe Storms Only
+
+```{r map-storms, echo=FALSE}
+p_map_storms
+```
+
+## Predictive Benchmarking
+
+```{r model-compare, echo=FALSE}
+p_model_compare
+```
+
+Use the metric toggle to switch among MAE, RMSE, and R2 for the four benchmark models.
+
+```{r category-model-compare, echo=FALSE}
+p_category_model_compare
+```
+
+Category-level RMSE comparison shows that gains are uneven and depend strongly on hazard type.
 
 ## Report
 
