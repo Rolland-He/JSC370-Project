@@ -1,5 +1,18 @@
 name: "jsc370-project"
 output_dir: "docs"
+exclude:
+  - "*.qmd"
+  - "*_files/"
+  - "data"
+  - "data/"
+  - "midterm_files"
+  - "midterm_files/"
+  - "final.qmd"
+  - "midterm.qmd"
+  - "final.html"
+  - "midterm.html"
+  - "midterm_2026.pdf"
+  - "final-2026.pdf"
 navbar:
   title: "JSC370 Final Project"
   left:
