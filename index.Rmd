@@ -1,0 +1,51 @@
+---
+title: "Global Natural Disaster Patterns from NASA EONET"
+output:
+  html_document:
+    toc: false
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+source("process_eonet_data.R")
+```
+
+## Project Overview
+
+This project analyzes global natural disaster observations from the NASA EONET API, with a focus on category imbalance, temporal trends, seasonality, spatial concentration, and predictive benchmarking.
+
+## Main Research Question
+
+How do global natural disaster observations in NASA EONET vary across category, time, seasonality, and space, and to what extent can these patterns support simple out-of-sample prediction?
+
+## Key Findings
+
+- Wildfires dominate the dataset and account for the large majority of observations.
+- Recorded observations rise sharply in the early 2020s.
+- Seasonal patterns differ across hazard categories.
+- More flexible models provide limited overall gains over simple baselines.
+
+## Featured Interactive Visualizations
+
+### Annual Trend
+
+```{r annual-trend, echo=FALSE}
+p_annual
+```
+
+### Category-Specific Trends
+
+```{r category-trend, echo=FALSE}
+p_category_trend
+```
+
+### Spatial Distribution
+
+```{r spatial-distribution, echo=FALSE}
+p_map
+```
+
+## Explore More
+
+- [Interactive Visualizations](Interactive_Vis.html)
+- [Download Report (PDF)](final.pdf)
+- [GitHub Repository](https://github.com/Rolland-He/JSC370-Project)

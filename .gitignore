@@ -209,3 +209,6 @@ __marimo__/
 # Quarto generated output
 *_files/
 /.quarto/
+
+# Local R library
+.Rlibs/

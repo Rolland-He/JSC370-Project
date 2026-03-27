@@ -1,0 +1,18 @@
+name: "jsc370-project"
+output_dir: "docs"
+navbar:
+  title: "JSC370 Final Project"
+  left:
+    - text: "Home"
+      href: index.html
+    - text: "Interactive Visualizations"
+      href: Interactive_Vis.html
+    - text: "Report"
+      href: Report.html
+  right:
+    - text: "GitHub Repository"
+      href: https://github.com/Rolland-He/JSC370-Project
+output:
+  html_document:
+    theme: cosmo
+    css: styles.css

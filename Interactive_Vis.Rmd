@@ -1,0 +1,55 @@
+---
+title: "Interactive Visualizations"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+source("process_eonet_data.R")
+```
+
+## Category Dominance
+
+```{r category-dominance, echo=FALSE}
+p_category
+```
+
+This chart shows the category distribution of EONET observations.
+
+## Temporal Trend
+
+```{r temporal-trend, echo=FALSE}
+p_annual
+```
+
+This line chart shows annual total observations over time.
+
+## Category-Specific Trajectories
+
+```{r category-trajectories, echo=FALSE}
+p_category_trend
+```
+
+This interactive plot compares category-level annual trajectories.
+
+## Seasonality
+
+```{r seasonality, echo=FALSE}
+p_heatmap
+```
+
+This heatmap shows month-by-category seasonal concentration.
+
+## Spatial Distribution
+
+```{r spatial-map, echo=FALSE}
+p_map
+```
+
+The interactive map allows zooming and closer regional inspection.
+
+## Report
+
+For full methodology, statistical testing, predictive benchmarking, and limitations, see the full report.

@@ -1,0 +1,23 @@
+---
+title: "Report"
+output:
+  html_document:
+    toc: false
+---
+
+# Full Written Report
+
+The full written report contains the complete methodology, statistical testing, predictive benchmarking, limitations, and conclusions for this project.
+
+## Download
+
+- [Download the Full Report (PDF)](final.pdf)
+
+## Report Contents
+
+- Introduction and research questions
+- Data acquisition and preprocessing
+- Statistical testing
+- Predictive modeling
+- Results and interpretation
+- Limitations and conclusions
