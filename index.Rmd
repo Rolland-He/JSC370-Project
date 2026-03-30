@@ -10,6 +10,18 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 source("process_eonet_data.R")
 ```
 
+```{r summary-metrics, echo=FALSE}
+top_cat <- category_counts$category[1]
+top_cat_n <- category_counts$n[1]
+top_cat_share <- category_counts$share[1]
+
+peak_year <- annual_counts$year[which.max(annual_counts$n)]
+peak_year_n <- max(annual_counts$n)
+
+best_full_rmse <- model_eval %>% arrange(RMSE) %>% slice(1)
+best_wf_rmse <- wf_model_eval %>% arrange(RMSE) %>% slice(1)
+```
+
 ## Project Overview
 
 This project analyzes global natural disaster observations from the NASA EONET API, with a focus on category imbalance, temporal trends, seasonality, spatial concentration, and predictive benchmarking.
@@ -20,10 +32,26 @@ How do global natural disaster observations in NASA EONET vary across category, 
 
 ## Key Findings
 
-- Wildfires dominate the dataset and account for the large majority of observations.
-- Recorded observations rise sharply in the early 2020s.
-- Seasonal patterns differ across hazard categories.
-- More flexible models provide limited overall gains over simple baselines.
+- `r top_cat` dominates the dataset with `r format(top_cat_n, big.mark = ",")` records (`r scales::percent(top_cat_share, accuracy = 0.1)`).
+- Recorded observations peak in `r peak_year` at `r format(peak_year_n, big.mark = ",")`, with a sharp post-2023 rise.
+- Seasonal structure is strong and category-dependent rather than uniform across hazards.
+- In full-scope benchmarking, the best RMSE is from `r best_full_rmse$model` (`r round(best_full_rmse$RMSE, 3)`), while in wildfire-only benchmarking the best RMSE shifts to `r best_wf_rmse$model` (`r round(best_wf_rmse$RMSE, 3)`).
+
+## Report Summary
+
+The written report is structured as Introduction, Methods, Results, and Conclusions, and answers explicit research questions with quantitative evidence.
+
+### Research question addressed in the report
+
+- Main question: How do NASA EONET disaster observations vary by category, time, seasonality, and space, and how does predictive performance change between two targets (full multi-category counts vs wildfire-only counts)?
+- Supporting questions include: category dominance, temporal trend shape, category-specific seasonality, and out-of-sample benchmark performance.
+
+### Quantitative findings from the report
+
+- Category imbalance is extreme: `r top_cat` accounts for `r scales::percent(top_cat_share, accuracy = 0.1)` of all observations.
+- Temporal counts peak in `r peak_year` at `r format(peak_year_n, big.mark = ",")`; the surge is primarily wildfire-driven.
+- Scope comparison changes model ranking: full scope best RMSE = `r round(best_full_rmse$RMSE, 3)` (`r best_full_rmse$model`), wildfire-only best RMSE = `r round(best_wf_rmse$RMSE, 3)` (`r best_wf_rmse$model`).
+- Even with partial RMSE gains, out-of-sample R2 remains weak (negative in the report benchmarks), so predictive results are interpreted cautiously.
 
 ## Featured Interactive Visualizations
 

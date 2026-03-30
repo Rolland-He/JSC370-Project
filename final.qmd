@@ -35,18 +35,21 @@ from xgboost import XGBRegressor
 
 Natural disasters such as wildfires, severe storms, floods, and volcanic eruptions are major sources of social and ecological risk. Understanding their temporal and spatial patterns can support hazard monitoring and policy planning. However, globally consistent event records are often fragmented across agencies.
 
-This project uses NASA's Earth Observatory Natural Event Tracker (EONET) API to study global disaster observations in a unified framework. Compared with the midterm report, this final report keeps the same dataset and core topic but adds stronger statistical and modeling components, with clearer interpretation and limitations.
+This project uses NASA's Earth Observatory Natural Event Tracker (EONET) API to study global disaster observations in a unified framework, combining descriptive pattern analysis with formal statistical testing and predictive benchmarking.
 
 The final research questions are:
 
-Main Research Question: How do global natural disaster observations recorded by NASA EONET vary across category, time, seasonality, and space, and to what extent do these patterns provide useful signal for simple out-of-sample prediction?
+Main Research Question: How do global natural disaster observations recorded by NASA EONET vary across category, time, seasonality, and space, and how does predictive performance change when the target is defined at two scopes (full multi-category counts vs wildfire-only counts)?
 
 Supporting Questions:
 
 1. Which disaster categories dominate the observed global records, and how imbalanced is the dataset?
 2. How have disaster observations changed over time, both overall and by category?
 3. Is seasonality statistically different across categories?
-4. Can a simple predictive model improve out-of-sample monthly count prediction relative to a seasonal baseline?
+4. Can simple benchmark models improve out-of-sample monthly prediction relative to a seasonal baseline?
+5. Does model ranking or forecast quality change when inference is restricted to the wildfire-only subset?
+
+Because the dataset is heavily dominated by wildfire observations, the primary inferential emphasis in this report is on wildfire-driven dynamics. Other categories are retained for descriptive context and imbalance diagnostics.
 
 ## Methods
 
@@ -124,6 +127,8 @@ The analysis has four layers:
 
 This combination is appropriate for the project goals. Descriptive summaries answer the distribution questions directly and transparently. The chi-square test is suitable because both `category` and `month` are categorical variables and the question concerns dependence in a contingency table. The annual linear trend model is a parsimonious first diagnostic of long-run direction, while the train/test predictive comparison addresses whether observed temporal patterns carry usable forecasting signal rather than only retrospective structure.
 
+Given severe class imbalance, this workflow is designed so that inferential claims are interpreted primarily through the dominant wildfire signal, while low-volume categories are used more cautiously for comparative pattern checks rather than strong standalone inference.
+
 For modeling, observations are aggregated to monthly category counts:
 
 $$
@@ -153,7 +158,7 @@ This split is appropriate because it enforces temporal ordering, so every test p
 
 The seasonal baseline is intentionally simple and strong: if no model can consistently outperform historical category-month averages, then added model complexity is not yet justified. OLS is used as an interpretable extension of that baseline, allowing us to test whether linear time drift and smooth seasonal structure improve generalization.
 
-As a nonlinear extension motivated by course material on smooth modeling, we additionally fit a GAM that replaces the linear year effect with a smooth term while preserving seasonal and category structure. We also add a lightweight XGBoost benchmark to test whether a flexible nonlinear learner materially improves out-of-sample prediction under the same temporal split.
+As a nonlinear extension, we additionally fit a GAM that replaces the linear year effect with a smooth term while preserving seasonal and category structure. We also add a lightweight XGBoost benchmark to test whether a flexible nonlinear learner materially improves out-of-sample prediction under the same temporal split.
 
 For extended predictive experiments, we construct additional category-level time-series features, including month index, lagged counts, and short rolling means.
 
@@ -165,6 +170,8 @@ total_events = len(df)
 top_category = category_counts.index[0]
 top_category_count = int(category_counts.iloc[0])
 top_category_share = top_category_count / total_events
+df_wf = df[df["category"] == "Wildfires"].copy()
+wf_total_events = len(df_wf)
 
 year_counts = df.groupby("year").size().sort_index()
 peak_year = int(year_counts.idxmax())
@@ -175,6 +182,17 @@ peak_month = int(month_counts.idxmax())
 low_month = int(month_counts.idxmin())
 peak_month_name = calendar.month_name[peak_month]
 low_month_name = calendar.month_name[low_month]
+
+# Data-quality diagnostics for observation-level counting
+obs_total = len(df)
+obs_unique_exact = df.drop_duplicates(
+    subset=["title", "category", "date", "longitude", "latitude"]
+).shape[0]
+obs_exact_dup = obs_total - obs_unique_exact
+obs_exact_dup_share = obs_exact_dup / obs_total if obs_total > 0 else np.nan
+
+event_proxy_unique = df.drop_duplicates(subset=["title", "category"]).shape[0]
+obs_per_event_proxy = obs_total / event_proxy_unique if event_proxy_unique > 0 else np.nan
 ```
 
 ### Category dominance and imbalance
@@ -263,6 +281,23 @@ Category-stratified trajectories show that the recent surge is not equally share
 
 This decomposition materially changes the interpretation of the aggregate trend. Instead of concluding that all disaster classes are rising in parallel, the evidence points to composition effects: one dominant category contributes most of the total increase. As a result, pooled trend summaries should be read alongside category-level patterns to avoid over-generalization.
 
+```{python}
+#| fig-cap: "Wildfire-only annual observation trend."
+wf_year_counts = df_wf.groupby("year").size().sort_index()
+wf_peak_year = int(wf_year_counts.idxmax())
+wf_peak_year_count = int(wf_year_counts.max())
+
+plt.figure(figsize=(8.4, 4.6))
+wf_year_counts.plot(marker="o", color="#d73027")
+plt.xlabel("Year")
+plt.ylabel("Wildfire observation count")
+plt.title("Annual wildfire trend (EONET subset)")
+plt.tight_layout()
+plt.show()
+```
+
+The wildfire-only trend mirrors the aggregate surge, confirming that the overall temporal increase is primarily wildfire-driven. This dedicated subset analysis avoids dilution from sparse categories and provides a cleaner view of the dominant signal.
+
 ### Seasonality and spatial concentration
 
 ```{python}
@@ -317,6 +352,39 @@ plt.show()
 Spatially, events are globally distributed but highly clustered in specific regions, indicating uneven hazard activity and/or uneven observation density.
 
 Importantly, spatial concentration in this dataset should not be interpreted as a direct map of intrinsic hazard risk. EONET reflects where events are observed, reported, and tracked with higher continuity; therefore, the map primarily represents observed-event density generated by both hazard processes and monitoring/reporting-system coverage.
+
+```{python}
+#| fig-cap: "Wildfire-only monthly seasonality pattern."
+wf_month_counts = df_wf.groupby("month").size().reindex(range(1, 13), fill_value=0)
+
+plt.figure(figsize=(8.8, 4.4))
+plt.bar(range(1, 13), wf_month_counts.values, color="#d73027")
+plt.xticks(range(1, 13), [calendar.month_abbr[m] for m in range(1, 13)])
+plt.xlabel("Month")
+plt.ylabel("Wildfire observation count")
+plt.title("Monthly wildfire seasonality")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+#| fig-cap: "Wildfire-only spatial distribution."
+plt.figure(figsize=(10.8, 5.1))
+plt.scatter(
+    df_wf["longitude"],
+    df_wf["latitude"],
+    s=5,
+    alpha=0.3,
+    color="#d73027",
+)
+plt.xlabel("Longitude")
+plt.ylabel("Latitude")
+plt.title("Global wildfire observation locations (EONET subset)")
+plt.tight_layout()
+plt.show()
+```
+
+These wildfire-only plots reinforce that the strongest temporal and seasonal signatures in the full dataset are driven by wildfire records, and that wildfire observations themselves remain spatially concentrated rather than uniformly distributed.
 
 ### Statistical tests
 
@@ -552,20 +620,146 @@ plt.show()
 cat_eval
 ```
 
-For Research Question 4, the main conclusion remains unchanged: out-of-sample prediction is challenging under the current setup. The OLS model does not deliver a consistent overall improvement over the seasonal baseline, and both models keep negative test R2 values (`{python} f"{b_r2:.3f}"` baseline; `{python} f"{o_r2:.3f}"` OLS). The GAM benchmark tests whether replacing constant linear drift with a smooth long-run trend helps, while XGBoost tests whether additional nonlinear flexibility and lag features materially improve prediction.
+For Research Question 4, out-of-sample prediction remains challenging under the current setup, but the extended benchmarks add nuance. OLS does not improve RMSE over the seasonal baseline, while GAM and XGBoost reduce overall RMSE (`{python} f"{b_rmse:.3f}"` baseline vs `{python} f"{g_rmse:.3f}"` GAM and `{python} f"{x_rmse:.3f}"` XGBoost). However, all models still have negative test R2 (`{python} f"{b_r2:.3f}"`, `{python} f"{o_r2:.3f}"`, `{python} f"{g_r2:.3f}"`, `{python} f"{x_r2:.3f}"`), so forecasting quality remains limited in absolute terms.
 
-These extensions add robustness depth rather than replacing the main narrative. If GAM and XGBoost show limited or inconsistent gains, that is still informative: it indicates that forecast performance is constrained more by available signal and feature design than by model class alone. Category-level results continue to show that any improvement is uneven, with dominant wildfire dynamics remaining hardest to improve.
+These extensions provide robustness depth rather than replacing the main narrative. The GAM result suggests that a smooth nonlinear year effect is more suitable than a constant linear drift for this dataset, but category-level RMSE remains heterogeneous across models. This mixed pattern indicates that performance is constrained not only by model class, but also by the available feature signal and the observation structure of the source data.
+
+```{python}
+#| tbl-cap: "Wildfire-only out-of-sample benchmark (monthly counts, test years >= 2024)."
+wf_panel = (
+    df_wf.groupby(["year", "month"])
+    .size()
+    .reset_index(name="count")
+    .sort_values(["year", "month"])
+    .reset_index(drop=True)
+)
+wf_panel["month_num"] = wf_panel["month"]
+wf_panel["sin_month"] = np.sin(2 * np.pi * wf_panel["month_num"] / 12.0)
+wf_panel["cos_month"] = np.cos(2 * np.pi * wf_panel["month_num"] / 12.0)
+wf_panel["lag_1"] = wf_panel["count"].shift(1)
+wf_panel["lag_12"] = wf_panel["count"].shift(12)
+wf_panel["rolling_mean_3"] = wf_panel["count"].shift(1).rolling(window=3, min_periods=1).mean()
+
+wf_train = wf_panel[wf_panel["year"] <= 2023].copy()
+wf_test = wf_panel[wf_panel["year"] >= 2024].copy()
+
+wf_baseline_lookup = (
+    wf_train.groupby("month")["count"].mean().rename("pred_baseline").reset_index()
+)
+wf_test = wf_test.merge(wf_baseline_lookup, on="month", how="left")
+wf_test["pred_baseline"] = wf_test["pred_baseline"].fillna(wf_train["count"].mean())
+
+# OLS
+X_wf_train = np.column_stack(
+    [
+        np.ones(len(wf_train)),
+        wf_train["year"].to_numpy(),
+        wf_train["sin_month"].to_numpy(),
+        wf_train["cos_month"].to_numpy(),
+    ]
+)
+X_wf_test = np.column_stack(
+    [
+        np.ones(len(wf_test)),
+        wf_test["year"].to_numpy(),
+        wf_test["sin_month"].to_numpy(),
+        wf_test["cos_month"].to_numpy(),
+    ]
+)
+y_wf_train = wf_train["count"].to_numpy(dtype=float)
+y_wf_test = wf_test["count"].to_numpy(dtype=float)
+wf_beta = np.linalg.pinv(X_wf_train.T @ X_wf_train) @ X_wf_train.T @ y_wf_train
+wf_test["pred_ols"] = np.maximum(0, X_wf_test @ wf_beta)
+
+# GAM
+wf_gam = LinearGAM(s(0) + l(1) + l(2)).fit(
+    wf_train[["year", "sin_month", "cos_month"]].to_numpy(),
+    y_wf_train,
+)
+wf_test["pred_gam"] = np.maximum(
+    0,
+    wf_gam.predict(wf_test[["year", "sin_month", "cos_month"]].to_numpy()),
+)
+
+# XGBoost
+for c in ["lag_1", "lag_12", "rolling_mean_3"]:
+    wf_train[c] = wf_train[c].fillna(0)
+    wf_test[c] = wf_test[c].fillna(0)
+
+wf_xgb = XGBRegressor(
+    n_estimators=200,
+    max_depth=4,
+    learning_rate=0.05,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=370,
+    objective="reg:squarederror",
+)
+wf_xgb.fit(
+    wf_train[["year", "month_num", "sin_month", "cos_month", "lag_1", "lag_12", "rolling_mean_3"]],
+    wf_train["count"],
+)
+wf_test["pred_xgb"] = np.maximum(
+    0,
+    wf_xgb.predict(wf_test[["year", "month_num", "sin_month", "cos_month", "lag_1", "lag_12", "rolling_mean_3"]]),
+)
+
+wf_b_mae, wf_b_rmse, wf_b_r2 = regression_metrics(y_wf_test, wf_test["pred_baseline"].to_numpy())
+wf_o_mae, wf_o_rmse, wf_o_r2 = regression_metrics(y_wf_test, wf_test["pred_ols"].to_numpy())
+wf_g_mae, wf_g_rmse, wf_g_r2 = regression_metrics(y_wf_test, wf_test["pred_gam"].to_numpy())
+wf_x_mae, wf_x_rmse, wf_x_r2 = regression_metrics(y_wf_test, wf_test["pred_xgb"].to_numpy())
+
+wf_model_eval = pd.DataFrame(
+    {
+        "Model": ["Seasonal baseline", "OLS", "GAM", "XGBoost"],
+        "MAE": [wf_b_mae, wf_o_mae, wf_g_mae, wf_x_mae],
+        "RMSE": [wf_b_rmse, wf_o_rmse, wf_g_rmse, wf_x_rmse],
+        "R2": [wf_b_r2, wf_o_r2, wf_g_r2, wf_x_r2],
+    }
+)
+wf_model_eval[["MAE", "RMSE", "R2"]] = wf_model_eval[["MAE", "RMSE", "R2"]].round(3)
+wf_model_eval
+```
+
+The wildfire-only benchmark isolates predictive behavior in the dominant category and removes cross-category mixing effects. This provides a direct check of whether model gains persist when the target is restricted to wildfire monthly counts only.
+
+```{python}
+#| tbl-cap: "Prediction-scope comparison between full multi-category and wildfire-only targets."
+full_scope = model_eval.copy()
+full_scope["Target"] = "Full dataset"
+full_scope["Model"] = full_scope["Model"].replace(
+    {
+        "OLS (linear year + month cycle + category)": "OLS",
+        "GAM (smooth year + month cycle + category)": "GAM",
+        "XGBoost (extended feature benchmark)": "XGBoost",
+        "Seasonal baseline": "Seasonal baseline",
+    }
+)
+
+wf_scope = wf_model_eval.copy()
+wf_scope["Target"] = "Wildfire-only"
+
+scope_compare = pd.concat([full_scope, wf_scope], ignore_index=True)[
+    ["Target", "Model", "MAE", "RMSE", "R2"]
+]
+scope_compare["Target"] = pd.Categorical(scope_compare["Target"], ["Full dataset", "Wildfire-only"])
+scope_compare["Model"] = pd.Categorical(scope_compare["Model"], ["Seasonal baseline", "OLS", "GAM", "XGBoost"])
+scope_compare = scope_compare.sort_values(["Target", "Model"]).reset_index(drop=True)
+scope_compare
+```
+
+Table 6 shows that predictive conclusions are scope-dependent and numerically distinct. In the full multi-category setting, GAM has the lowest RMSE (`{python} f"{g_rmse:.3f}"`) compared with baseline (`{python} f"{b_rmse:.3f}"`) and OLS (`{python} f"{o_rmse:.3f}"`). In the wildfire-only setting, OLS has the lowest RMSE (`{python} f"{wf_o_rmse:.3f}"`) compared with baseline (`{python} f"{wf_b_rmse:.3f}"`) and GAM (`{python} f"{wf_g_rmse:.3f}"`). This rank reversal confirms that preferred model choice depends on target definition. At the same time, out-of-sample R2 remains negative in both scopes (full: `{python} f"{b_r2:.3f}"` to `{python} f"{g_r2:.3f}"`; wildfire-only: `{python} f"{wf_b_r2:.3f}"` to `{python} f"{wf_o_r2:.3f}"`), indicating limited absolute forecast skill despite partial RMSE gains.
 
 ## Conclusions and Summary
 
-This final report extends the midterm analysis into a more complete statistical workflow. Four conclusions stand out:
+Four conclusions stand out:
 
 1. The EONET dataset is strongly imbalanced, with `{python} top_category` contributing `{python} f"{top_category_share:.1%}"` of observations.
 2. Total recorded observations increase sharply in recent years, peaking at `{python} f"{peak_year_count:,}"` in `{python} peak_year`.
 3. Seasonality is substantial and category-specific, supported by both visual diagnostics and a significant chi-square test.
-4. The predictive-modeling test does not show a reliable overall improvement over a seasonal baseline; gains are limited to specific minor categories and are not robust at the dataset level.
+4. Prediction results depend on scope: in the full multi-category task, GAM achieves the best RMSE (`{python} f"{g_rmse:.3f}"`), while in the wildfire-only task, OLS achieves the best RMSE (`{python} f"{wf_o_rmse:.3f}"`). However, all out-of-sample R2 values remain negative (full scope best R2 = `{python} f"{max([b_r2, o_r2, g_r2, x_r2]):.3f}"`; wildfire-only best R2 = `{python} f"{max([wf_b_r2, wf_o_r2, wf_g_r2, wf_x_r2]):.3f}"`), so overall predictive fit is still limited.
 
-The broader implication is that global disaster monitoring data should be interpreted with attention to category imbalance and observation-system effects, not only hazard dynamics. Main limitations include potential reporting heterogeneity across years, the use of observation counts rather than physical severity, and simple linear model structure. Future work can incorporate richer covariates (climate indices, regional land cover, remote-sensing intensity metrics) and compare nonlinear or hierarchical models.
+The broader implication is that global disaster monitoring data should be interpreted with attention to category imbalance and observation-system effects, not only hazard dynamics. In this dataset, that means conclusions are most reliable for wildfire-dominant behavior, while inference for sparse categories remains provisional. Main limitations include potential reporting heterogeneity across years, the use of observation counts rather than physical severity, and simple linear model structure. Future work can incorporate richer covariates (climate indices, regional land cover, remote-sensing intensity metrics) and compare nonlinear or hierarchical models.
 
 At a bigger-picture level, this project shows that disaster-monitoring datasets are dual-purpose artifacts: they describe natural events, but they also encode how institutions observe the Earth. For policy and research use, this means trend, seasonality, and spatial concentration should be interpreted as signals from both hazards and measurement systems. A publication-ready analysis therefore needs both statistical rigor and measurement-awareness, especially when conclusions may inform real-world preparedness decisions.
 

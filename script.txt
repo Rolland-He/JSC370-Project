@@ -1,0 +1,49 @@
+Hi, this is my JSC370 final project on global natural disaster patterns using NASA EONET data.
+
+In simple terms, I wanted to answer one question:
+What patterns do we see in global disaster observations, and can those patterns help with prediction?
+
+I used NASA’s EONET API and focused on four parts:
+category imbalance, time trends, seasonality, and spatial distribution — then I tested prediction performance.
+
+So let me walk you through the website.
+
+On the Home page, I give a short overview and show the key interactive plots.
+The first thing that stands out is that the dataset is very imbalanced: wildfires dominate the records.
+That matters, because if one category is so large, it can drive the overall trend and hide what’s happening in smaller categories.
+
+Then on the Interactive Visualizations page, I start with category dominance.
+You can clearly see wildfire counts are much higher than the others.
+
+Next, I show the time trend.
+At first glance, total observations rise a lot in recent years.
+But once I break it down by category, it’s clear that this increase is not equally shared — wildfire contributes most of the surge.
+So the big message is: the aggregate trend is real in the data, but composition matters.
+
+After that, I look at seasonality.
+The monthly heatmaps and line views show that seasonal patterns are different across categories.
+Some categories are much more concentrated in specific months than others.
+So seasonality exists, but it’s not one universal pattern.
+
+Then I move to the map section.
+You can see strong geographic clustering.
+But I interpret this carefully: this is a map of observed and reported events, not a perfect map of intrinsic risk.
+So clustering can reflect both hazard activity and where monitoring/reporting is more continuous.
+
+Now for modeling.
+I compare four models: a seasonal baseline, OLS, GAM, and XGBoost.
+I keep the same strict split for all of them: training data through 2023, testing on 2024 and after.
+That way the comparison is fair and truly out-of-sample.
+
+The result is interesting: more flexible models don’t automatically give a big overall improvement.
+Performance gains are mixed and category-specific, and the dominant wildfire category is still hard to predict well.
+So even when results are “not dramatically better,” that’s still useful — it tells us the bottleneck may be feature signal, not just model complexity.
+
+Finally, the Report page has the downloadable PDF with full methods, statistical tests, model comparison tables, and conclusions.
+
+So to wrap up:
+This project shows clear global patterns in the EONET data, but also shows why interpretation needs caution.
+These data reflect both real hazards and the monitoring system itself.
+And from a modeling perspective, adding flexibility helps in some places, but does not fully solve prediction under the current feature set.
+
+Thanks for listening.

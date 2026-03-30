@@ -19,6 +19,8 @@ df <- read_csv("data/eonet_events.csv", show_col_types = FALSE) %>%
   ) %>%
   filter(!is.na(date), !is.na(year), !is.na(month), !is.na(category))
 
+df_wf <- df %>% filter(category == "Wildfires")
+
 category_levels <- df %>%
   count(category, sort = TRUE) %>%
   pull(category)
@@ -92,6 +94,15 @@ annual_counts <- df %>%
 
 peak_row <- annual_counts %>% filter(n == max(n)) %>% slice(1)
 
+wf_annual_counts <- df_wf %>%
+  count(year) %>%
+  arrange(year) %>%
+  mutate(
+    smooth = stats::predict(
+      stats::loess(n ~ year, data = ., span = 0.6, control = stats::loess.control(surface = "direct"))
+    )
+  )
+
 p_annual <- plot_ly(annual_counts, x = ~year) %>%
   add_trace(
     y = ~n,
@@ -129,6 +140,38 @@ p_annual <- plot_ly(annual_counts, x = ~year) %>%
         text = "Recorded observations, not direct physical hazard frequency",
         showarrow = FALSE,
         font = list(size = 12, color = "#555555")
+      )
+    )
+  )
+
+p_wf_annual <- plot_ly(wf_annual_counts, x = ~year) %>%
+  add_trace(
+    y = ~n,
+    type = "scatter",
+    mode = "lines+markers",
+    name = "Wildfire annual counts",
+    line = list(color = "#d73027", width = 2.5),
+    marker = list(size = 6, color = "#d73027"),
+    hovertemplate = "Year: %{x}<br>Wildfire count: %{y:,}<extra></extra>"
+  ) %>%
+  add_lines(
+    y = ~smooth,
+    name = "Loess trend",
+    line = list(color = "#7f0000", width = 2, dash = "dash"),
+    hovertemplate = "Year: %{x}<br>Smoothed: %{y:.1f}<extra></extra>"
+  ) %>%
+  layout(
+    xaxis = list(title = "Year"),
+    yaxis = list(title = "Wildfire observations"),
+    annotations = list(
+      list(
+        x = 0.5,
+        y = 1.12,
+        xref = "paper",
+        yref = "paper",
+        text = "Wildfire-only view of the dominant signal",
+        showarrow = FALSE,
+        font = list(size = 12, color = "#7f0000")
       )
     )
   )
@@ -371,7 +414,13 @@ x_test <- model.matrix(~ year + month_sin + month_cos + category_code, data = te
 ols_coef <- qr.solve(x_train, train$count)
 test$pred_ols <- pmax(0, as.numeric(x_test %*% ols_coef))
 
-gam_fit <- mgcv::gam(count ~ s(year, k = 6) + month_sin + month_cos + category_code, data = train, method = "REML")
+full_unique_years <- dplyr::n_distinct(train$year)
+if (full_unique_years >= 4) {
+  full_k <- min(6, full_unique_years - 1)
+  gam_fit <- mgcv::gam(count ~ s(year, k = full_k) + month_sin + month_cos + category_code, data = train, method = "REML")
+} else {
+  gam_fit <- mgcv::gam(count ~ year + month_sin + month_cos + category_code, data = train, method = "REML")
+}
 test$pred_gam <- pmax(0, predict(gam_fit, newdata = test))
 
 has_xgboost <- requireNamespace("xgboost", quietly = TRUE)
@@ -413,6 +462,85 @@ if (has_xgboost) {
 model_eval <- bind_rows(metric_rows) %>%
   mutate(across(c(MAE, RMSE, R2), as.numeric))
 
+# --- Wildfire-only predictive benchmarking ---
+wf_monthly <- df_wf %>%
+  count(year, month, name = "count") %>%
+  arrange(year, month)
+
+wf_train <- wf_monthly %>% filter(year <= split_year)
+wf_test <- wf_monthly %>% filter(year > split_year)
+
+wf_baseline_lookup <- wf_train %>%
+  group_by(month) %>%
+  summarise(pred_baseline = mean(count), .groups = "drop")
+
+wf_test <- wf_test %>%
+  left_join(wf_baseline_lookup, by = "month") %>%
+  mutate(pred_baseline = replace_na(pred_baseline, mean(wf_train$count)))
+
+wf_train <- wf_train %>%
+  mutate(
+    month_sin = sin(2 * pi * month / 12),
+    month_cos = cos(2 * pi * month / 12)
+  )
+wf_test <- wf_test %>%
+  mutate(
+    month_sin = sin(2 * pi * month / 12),
+    month_cos = cos(2 * pi * month / 12)
+  )
+
+wf_x_train <- model.matrix(~ year + month_sin + month_cos, data = wf_train)
+wf_x_test <- model.matrix(~ year + month_sin + month_cos, data = wf_test)
+wf_ols_coef <- qr.solve(wf_x_train, wf_train$count)
+wf_test$pred_ols <- pmax(0, as.numeric(wf_x_test %*% wf_ols_coef))
+
+wf_unique_years <- dplyr::n_distinct(wf_train$year)
+if (wf_unique_years >= 4) {
+  wf_k <- min(6, wf_unique_years - 1)
+  wf_gam_fit <- mgcv::gam(count ~ s(year, k = wf_k) + month_sin + month_cos, data = wf_train, method = "REML")
+} else {
+  wf_gam_fit <- mgcv::gam(count ~ year + month_sin + month_cos, data = wf_train, method = "REML")
+}
+wf_test$pred_gam <- pmax(0, predict(wf_gam_fit, newdata = wf_test))
+
+if (has_xgboost) {
+  wf_train_xgb <- as.matrix(wf_train %>% select(year, month, month_sin, month_cos))
+  wf_test_xgb <- as.matrix(wf_test %>% select(year, month, month_sin, month_cos))
+  wf_dtrain <- xgboost::xgb.DMatrix(data = wf_train_xgb, label = wf_train$count)
+  wf_dtest <- xgboost::xgb.DMatrix(data = wf_test_xgb)
+  wf_xgb_fit <- xgboost::xgb.train(
+    params = list(
+      objective = "reg:squarederror",
+      eval_metric = "rmse",
+      eta = 0.05,
+      max_depth = 4,
+      subsample = 0.8,
+      colsample_bytree = 0.8
+    ),
+    data = wf_dtrain,
+    nrounds = 150,
+    verbose = 0
+  )
+  wf_test$pred_xgb <- pmax(0, as.numeric(predict(wf_xgb_fit, wf_dtest)))
+} else {
+  wf_test$pred_xgb <- NA_real_
+}
+
+wf_metric_rows <- list(
+  tibble(model = "Seasonal baseline", !!!as.list(metric_fn(wf_test$count, wf_test$pred_baseline))),
+  tibble(model = "OLS", !!!as.list(metric_fn(wf_test$count, wf_test$pred_ols))),
+  tibble(model = "GAM", !!!as.list(metric_fn(wf_test$count, wf_test$pred_gam)))
+)
+if (has_xgboost) {
+  wf_metric_rows <- append(
+    wf_metric_rows,
+    list(tibble(model = "XGBoost", !!!as.list(metric_fn(wf_test$count, wf_test$pred_xgb))))
+  )
+}
+
+wf_model_eval <- bind_rows(wf_metric_rows) %>%
+  mutate(across(c(MAE, RMSE, R2), as.numeric))
+
 p_model_compare <- plot_ly()
 metric_list <- c("MAE", "RMSE", "R2")
 for (i in seq_along(metric_list)) {
@@ -436,6 +564,61 @@ p_model_compare <- p_model_compare %>%
     yaxis = list(title = "MAE"),
     xaxis = list(title = "Model"),
     barmode = "group",
+    updatemenus = list(
+      list(
+        type = "buttons",
+        direction = "right",
+        x = 0,
+        y = 1.18,
+        buttons = lapply(seq_along(metric_list), function(i) {
+          list(
+            method = "update",
+            args = list(
+              list(visible = as.list(seq_along(metric_list) == i)),
+              list(yaxis = list(title = metric_list[i]))
+            ),
+            label = metric_list[i]
+          )
+        })
+      )
+    )
+  )
+
+# Scope comparison: full target vs wildfire-only target
+scope_compare <- bind_rows(
+  model_eval %>% mutate(scope = "Full multi-category"),
+  wf_model_eval %>% mutate(scope = "Wildfire-only")
+) %>%
+  select(scope, model, MAE, RMSE, R2)
+
+p_scope_compare <- plot_ly()
+for (i in seq_along(metric_list)) {
+  m <- metric_list[i]
+  m_df <- scope_compare %>% select(scope, model, value = all_of(m))
+  p_scope_compare <- p_scope_compare %>%
+    add_bars(
+      data = m_df,
+      x = ~model,
+      y = ~value,
+      color = ~scope,
+      colors = c("Full multi-category" = "#2c7fb8", "Wildfire-only" = "#d73027"),
+      visible = i == 1,
+      text = ~ifelse(is.na(value), "N/A", round(value, 3)),
+      textposition = "auto",
+      hovertemplate = paste0(
+        "Model: %{x}<br>",
+        "Scope: %{fullData.name}<br>",
+        m, ": %{y:.3f}<extra></extra>"
+      )
+    )
+}
+
+p_scope_compare <- p_scope_compare %>%
+  layout(
+    barmode = "group",
+    xaxis = list(title = "Model"),
+    yaxis = list(title = "MAE"),
+    legend = list(title = list(text = "Prediction scope")),
     updatemenus = list(
       list(
         type = "buttons",

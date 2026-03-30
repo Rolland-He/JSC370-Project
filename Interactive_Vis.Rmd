@@ -11,6 +11,13 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 source("process_eonet_data.R")
 ```
 
+```{r predictive-summary-values, echo=FALSE}
+best_full <- model_eval %>% arrange(RMSE) %>% slice(1)
+best_wf <- wf_model_eval %>% arrange(RMSE) %>% slice(1)
+best_full_r2 <- max(model_eval$R2, na.rm = TRUE)
+best_wf_r2 <- max(wf_model_eval$R2, na.rm = TRUE)
+```
+
 ## Category Dominance
 
 ```{r category-dominance, echo=FALSE}
@@ -99,7 +106,7 @@ p_map_storms
 p_model_compare
 ```
 
-Use the metric toggle to switch among MAE, RMSE, and R2 for the four benchmark models.
+The full multi-category target and the wildfire-only target are treated as parallel predictive tasks. This is intentional: model ranking can change when the target scope changes.
 
 `r xgboost_status_note`
 
@@ -108,6 +115,26 @@ p_category_model_compare
 ```
 
 Category-level RMSE comparison shows that gains are uneven and depend strongly on hazard type.
+
+## Prediction Scope Comparison
+
+```{r scope-compare-plot, echo=FALSE}
+p_scope_compare
+```
+
+```{r scope-compare-table, echo=FALSE}
+knitr::kable(scope_compare, digits = 3)
+```
+
+This module aligns with the written report interpretation: in the full-scope task, the best RMSE comes from `r best_full$model` (`r round(best_full$RMSE, 3)`), while in the wildfire-only task, the best RMSE comes from `r best_wf$model` (`r round(best_wf$RMSE, 3)`). Even with partial RMSE gains, predictive fit remains weak in absolute terms because best R2 stays negative in both scopes (`r round(best_full_r2, 3)` full scope; `r round(best_wf_r2, 3)` wildfire-only scope).
+
+## Wildfire-only Analysis
+
+```{r wildfire-annual-trend, echo=FALSE}
+p_wf_annual
+```
+
+This section gives a direct wildfire-only entry point. It complements the wildfire-only prediction benchmark and makes the dominant-category dynamics easier to review without cross-category mixing.
 
 ## Report
 

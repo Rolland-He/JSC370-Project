@@ -5,19 +5,69 @@ output:
     toc: false
 ---
 
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("process_eonet_data.R")
+
+top_cat <- category_counts$category[1]
+top_cat_n <- category_counts$n[1]
+top_cat_share <- category_counts$share[1]
+peak_year <- annual_counts$year[which.max(annual_counts$n)]
+peak_year_n <- max(annual_counts$n)
+
+best_full <- model_eval %>% arrange(RMSE) %>% slice(1)
+best_wf <- wf_model_eval %>% arrange(RMSE) %>% slice(1)
+best_full_r2 <- max(model_eval$R2, na.rm = TRUE)
+best_wf_r2 <- max(wf_model_eval$R2, na.rm = TRUE)
+```
+
 # Full Written Report
 
-The full written report contains the complete methodology, statistical testing, predictive benchmarking, limitations, and conclusions for this project.
+The PDF report is the primary analytical document for this project. It contains the full methods, final figures/tables, statistical testing, benchmark models, and interpretation boundaries.
 
 ## Download
 
 - [Download the Full Report (PDF)](final.pdf)
 
-## Report Contents
+## What the report specifically answers
 
-- Introduction and research questions
-- Data acquisition and preprocessing
-- Statistical testing
-- Predictive modeling
-- Results and interpretation
-- Limitations and conclusions
+Main question:
+
+How do NASA EONET observations vary across category, time, seasonality, and space, and how does predictive performance change between two target scopes (full multi-category counts vs wildfire-only counts)?
+
+Supporting questions:
+
+- Which category dominates and by how much?
+- What is the temporal trend shape, and does it differ by category?
+- How strong is monthly seasonality, and is it category-dependent?
+- Do simple benchmarks improve out-of-sample prediction under strict future-data testing?
+
+## Quantitative highlights from the report
+
+- Dominant class: `r top_cat` with `r format(top_cat_n, big.mark = ",")` observations (`r scales::percent(top_cat_share, accuracy = 0.1)` of all records).
+- Peak annual volume: `r peak_year` with `r format(peak_year_n, big.mark = ",")` observations.
+- Full-scope benchmark: best RMSE from `r best_full$model` (`r round(best_full$RMSE, 3)`).
+- Wildfire-only benchmark: best RMSE from `r best_wf$model` (`r round(best_wf$RMSE, 3)`).
+- Best out-of-sample R2 remains weak in both scopes (`r round(best_full_r2, 3)` full scope; `r round(best_wf_r2, 3)` wildfire-only).
+
+## Structure of the PDF
+
+### Introduction
+- Topic motivation, dataset context, and explicit research questions.
+
+### Methods
+- Reproducible API ingestion and cleaning pipeline.
+- Descriptive + inferential workflow.
+- Predictive benchmark design with strict temporal split (train <= 2023, test >= 2024).
+
+### Results
+- Publication-ready figures and tables for dominance, trend, seasonality, and space.
+- Full-scope and wildfire-only benchmark comparison with MAE/RMSE/R2.
+
+### Conclusions and limitations
+- Final claims with numerical support and interpretation boundaries under severe class imbalance.
+
+## How to use this page
+
+Use this page as a concise summary of what is in the PDF.  
+The interactive website pages are for exploration, while `final.pdf` is the formal report for methods, evidence, and final conclusions.
