@@ -49,7 +49,7 @@ Supporting Questions:
 4. Can simple benchmark models improve out-of-sample monthly prediction relative to a seasonal baseline?
 5. Does model ranking or forecast quality change when inference is restricted to the wildfire-only subset?
 
-Because the dataset is heavily dominated by wildfire observations, the primary inferential emphasis in this report is on wildfire-driven dynamics. Other categories are retained for descriptive context and imbalance diagnostics.
+Because the dataset is heavily dominated by wildfire observations, I'll also include some analysis on wildfire-driven dynamics, and try to make comparison between full multi-category target and wildfire-only target.
 
 ## Methods
 
@@ -122,10 +122,10 @@ The analysis has four layers:
 2. **Formal statistical testing**:
    - chi-square test of independence for `category × month`;
    - linear trend regression of annual counts on year.
-3. **Predictive modeling** (new in final report): monthly count prediction by category.
+3. **Predictive modeling**: monthly count prediction by category.
 4. **Evaluation**: out-of-sample metrics (MAE, RMSE, R2) on a strict time split.
 
-This combination is appropriate for the project goals. Descriptive summaries answer the distribution questions directly and transparently. The chi-square test is suitable because both `category` and `month` are categorical variables and the question concerns dependence in a contingency table. The annual linear trend model is a parsimonious first diagnostic of long-run direction, while the train/test predictive comparison addresses whether observed temporal patterns carry usable forecasting signal rather than only retrospective structure.
+ Descriptive summaries answer the distribution questions directly and transparently. The chi-square test is suitable because both `category` and `month` are categorical variables and the question concerns dependence in a contingency table. The annual linear trend model is a parsimonious first diagnostic of long-run direction, while the train/test predictive comparison addresses whether observed temporal patterns carry usable forecasting signal rather than only retrospective structure.
 
 Given severe class imbalance, this workflow is designed so that inferential claims are interpreted primarily through the dominant wildfire signal, while low-volume categories are used more cautiously for comparative pattern checks rather than strong standalone inference.
 
@@ -152,7 +152,7 @@ where \(m_t\) is calendar month and category indicators use one reference catego
 Training/testing protocol:
 
 - Training: years `<= 2023`
-- Testing: years `>= 2024` (strictly future data)
+- Testing: years `>= 2024`
 
 This split is appropriate because it enforces temporal ordering, so every test prediction uses only information that would have been available before 2024.
 
@@ -595,6 +595,44 @@ cat_eval[["Baseline", "OLS", "GAM", "XGBoost"]] = cat_eval[
 #| tbl-cap: "Out-of-sample predictive performance on test years (>= 2024)."
 model_eval
 ```
+
+```{python}
+#| tbl-cap: "Top XGBoost feature importances for the full multi-category prediction task."
+feature_importance = (
+    pd.DataFrame(
+        {
+            "Feature": xgb_train_X.columns,
+            "Importance": xgb_model.feature_importances_,
+        }
+    )
+    .sort_values("Importance", ascending=False)
+    .reset_index(drop=True)
+)
+
+feature_importance["Importance"] = feature_importance["Importance"].round(4)
+feature_importance_top = feature_importance.head(12).copy()
+feature_importance_top
+```
+
+```{python}
+#| fig-cap: "Top XGBoost feature importances (full multi-category task)."
+plot_imp = feature_importance.head(10).iloc[::-1].copy()
+
+plt.figure(figsize=(9.2, 5.3))
+plt.barh(plot_imp["Feature"], plot_imp["Importance"], color="#756bb1")
+plt.xlabel("Importance")
+plt.ylabel("Feature")
+plt.title("XGBoost feature importance (top 10)")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+top_feature_name = feature_importance.iloc[0]["Feature"]
+top_feature_value = feature_importance.iloc[0]["Importance"]
+```
+
+Variable-importance diagnostics provide additional model interpretability for the nonlinear benchmark. The most influential predictor in this setup is `{python} top_feature_name` (importance `{python} f"{top_feature_value:.4f}"`), while the full ranking shows that predictive signal is distributed across temporal structure and category-sensitive features rather than one single dominant covariate. This supports the earlier finding that modest RMSE gains can occur even when absolute out-of-sample fit (R2) remains weak.
 
 ```{python}
 #| fig-cap: "Smoothed annual trend from GAM overlaid on observed annual counts."
